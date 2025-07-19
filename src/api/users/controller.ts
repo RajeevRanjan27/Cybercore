@@ -51,6 +51,14 @@ interface UserStatsResponse {
     recentSignups: number;
     averageUsersPerTenant: number;
     growthRate: number;
+    registrationTrend: Array<{
+        date: string;
+        count: number;
+    }>;
+    loginActivity: Array<{
+        date: string;
+        count: number;
+    }>;
 }
 
 export class UserController {
@@ -126,57 +134,112 @@ export class UserController {
                 : '-password -__v';
 
             // Execute query with aggregation for better performance
-            const aggregationPipeline: PipelineStage[] = [
-                { $match: baseQuery },
-                { $sort: sortCriteria },
-                { $skip: skip },
-                { $limit: limit },
-                {
-                    $lookup: {
-                        from: 'tenants',
-                        localField: 'tenantId',
-                        foreignField: '_id',
-                        as: 'tenant',
-                        pipeline: [{ $project: { name: 1, domain: 1, subdomain: 1 } }]
-                    }
-                },
-                { $unwind: { path: '$tenant', preserveNullAndEmptyArrays: true } },
-                {
-                    $project: {
-                        password: 0,
-                        __v: 0,
-                        ...(params.fields && SearchService.convertFieldsToProjection(params.fields))
-                    }
-                }
-            ];
+            let users: any[];
+            let stats: any = null;
 
-            // Add stats aggregation if requested
             if (params.includeStats === 'true') {
-                aggregationPipeline.push({
-                    $facet: {
-                        users: [{ $skip: 0 }], // Get all users for this stage
-                        stats: [
-                            {
-                                $group: {
-                                    _id: null,
-                                    totalUsers: { $sum: 1 },
-                                    activeUsers: {
-                                        $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] }
-                                    },
-                                    roleDistribution: {
-                                        $push: '$role'
+                // When including stats, we need a different aggregation approach
+                const statsAggregationPipeline: PipelineStage[] = [
+                    { $match: baseQuery },
+                    {
+                        $facet: {
+                            users: [
+                                { $sort: sortCriteria },
+                                { $skip: skip },
+                                { $limit: limit },
+                                {
+                                    $lookup: {
+                                        from: 'tenants',
+                                        localField: 'tenantId',
+                                        foreignField: '_id',
+                                        as: 'tenant',
+                                        pipeline: [{ $project: { name: 1, domain: 1, subdomain: 1 } }]
+                                    }
+                                },
+                                { $unwind: { path: '$tenant', preserveNullAndEmptyArrays: true } },
+                                {
+                                    $project: {
+                                        password: 0,
+                                        __v: 0,
+                                        ...(params.fields && SearchService.convertFieldsToProjection(params.fields))
                                     }
                                 }
-                            }
-                        ]
+                            ],
+                            stats: [
+                                {
+                                    $group: {
+                                        _id: null,
+                                        totalUsers: { $sum: 1 },
+                                        activeUsers: {
+                                            $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] }
+                                        },
+                                        inactiveUsers: {
+                                            $sum: { $cond: [{ $eq: ['$isActive', false] }, 1, 0] }
+                                        }
+                                    }
+                                }
+                            ],
+                            roleDistribution: [
+                                {
+                                    $group: {
+                                        _id: '$role',
+                                        count: { $sum: 1 }
+                                    }
+                                }
+                            ]
+                        }
                     }
-                });
+                ];
+
+                const facetResults = await User.aggregate(statsAggregationPipeline);
+                const facetData = facetResults[0] || { users: [], stats: [], roleDistribution: [] };
+
+                users = facetData.users || [];
+
+                // Process stats
+                if (facetData.stats && facetData.stats[0]) {
+                    const roleStats: Record<string, number> = {};
+                    (facetData.roleDistribution || []).forEach((item: any) => {
+                        if (item._id) {
+                            roleStats[item._id] = item.count;
+                        }
+                    });
+
+                    stats = {
+                        ...facetData.stats[0],
+                        roleDistribution: roleStats
+                    };
+                }
+            } else {
+                // Normal aggregation without stats
+                const aggregationPipeline: PipelineStage[] = [
+                    { $match: baseQuery },
+                    { $sort: sortCriteria },
+                    { $skip: skip },
+                    { $limit: limit },
+                    {
+                        $lookup: {
+                            from: 'tenants',
+                            localField: 'tenantId',
+                            foreignField: '_id',
+                            as: 'tenant',
+                            pipeline: [{ $project: { name: 1, domain: 1, subdomain: 1 } }]
+                        }
+                    },
+                    { $unwind: { path: '$tenant', preserveNullAndEmptyArrays: true } },
+                    {
+                        $project: {
+                            password: 0,
+                            __v: 0,
+                            ...(params.fields && SearchService.convertFieldsToProjection(params.fields))
+                        }
+                    }
+                ];
+
+                users = await User.aggregate(aggregationPipeline);
             }
 
-            const [users, totalCount] = await Promise.all([
-                User.aggregate(aggregationPipeline),
-                User.countDocuments(baseQuery)
-            ]);
+            const totalCount = await User.countDocuments(baseQuery);
 
             // Handle export functionality
             if (params.export) {
@@ -207,8 +270,9 @@ export class UserController {
                 })
             );
 
-            const responseData: PaginatedResponse<any> = {
-                data: enhancedUsers,
+            // Build response data with meta included
+            const responseData: any = {
+                users: enhancedUsers,
                 pagination: {
                     page,
                     limit,
@@ -216,22 +280,24 @@ export class UserController {
                     totalPages: Math.ceil(totalCount / limit),
                     hasNext: page * limit < totalCount,
                     hasPrev: page > 1
+                },
+                meta: {
+                    searchQuery: params.search || null,
+                    appliedFilters: SearchService.getAppliedFilters(params),
+                    cacheHit: false,
+                    includeStats: params.includeStats === 'true'
                 }
             };
 
             // Add aggregated stats if requested
-            if (params.includeStats === 'true' && users.length > 0 && users[0].stats) {
-                responseData.stats = users[0].stats[0];
+            if (params.includeStats === 'true' && stats) {
+                responseData.stats = stats;
             }
 
-            const response: ApiResponse<PaginatedResponse<any>> = {
+            const response: ApiResponse = {
                 success: true,
                 data: responseData,
-                meta: {
-                    searchQuery: params.search || null,
-                    appliedFilters: SearchService.getAppliedFilters(params),
-                    cacheHit: false
-                },
+                message: `Retrieved ${enhancedUsers.length} users`,
                 timestamp: new Date().toISOString()
             };
 
@@ -251,9 +317,7 @@ export class UserController {
             logger.error('Error in getUsers:', error);
             next(error);
         }
-    }
-
-    /**
+    }    /**
      * Get detailed user information with comprehensive data
      */
     static async getUserById(req: Request, res: Response, next: NextFunction) {
@@ -336,13 +400,22 @@ export class UserController {
                 enhancedUser.stats = await UserService.getUserStatistics(id, user);
             }
 
-            const response: ApiResponse = {
-                success: true,
-                data: { user: enhancedUser },
+            // Create response with meta included in data
+            const responseData = {
+                user: enhancedUser,
                 meta: {
                     lastAccessed: new Date().toISOString(),
-                    accessedBy: user.userId
-                },
+                    accessedBy: user.userId,
+                    includesActivity: includeActivity === 'true',
+                    includesPermissions: includePermissions === 'true',
+                    includesStats: includeStats === 'true'
+                }
+            };
+
+            const response: ApiResponse = {
+                success: true,
+                data: responseData,
+                message: 'User details retrieved successfully',
                 timestamp: new Date().toISOString()
             };
 
@@ -362,7 +435,6 @@ export class UserController {
             next(error);
         }
     }
-
     /**
      * Advanced user update with comprehensive validation and audit
      */
@@ -773,16 +845,22 @@ export class UserController {
                 user
             );
 
-            const response: ApiResponse<UserStatsResponse> = {
-                success: true,
-                data: stats,
+
+            const responseData = {
+                ...stats,
                 meta: {
                     period,
                     groupBy,
                     dateRange,
                     includeInactive: includeInactive === 'true',
                     generatedAt: new Date().toISOString()
-                },
+                }
+            };
+
+            const response: ApiResponse = {
+                success: true,
+                data: responseData,
+                message: 'User statistics retrieved successfully',
                 timestamp: new Date().toISOString()
             };
 
@@ -842,21 +920,26 @@ export class UserController {
                 advanced: advanced === 'true'
             });
 
-            const response: ApiResponse = {
-                success: true,
-                data: {
-                    query,
-                    results: searchResults.results,
-                    facets: searchResults.facets,
-                    suggestions: searchResults.suggestions,
-                    totalResults: searchResults.total,
-                    searchTime: searchResults.searchTime
-                },
+
+            // Create response with meta included in data
+            const responseData = {
+                query,
+                results: searchResults.results,
+                facets: searchResults.facets,
+                suggestions: searchResults.suggestions,
+                totalResults: searchResults.total,
+                searchTime: searchResults.searchTime,
                 meta: {
                     advanced: advanced === 'true',
                     highlight: highlight === 'true',
                     fuzzy: fuzzy === 'true'
-                },
+                }
+            };
+
+            const response: ApiResponse = {
+                success: true,
+                data: responseData,
+                message: `Found ${searchResults.total} users matching your search`,
                 timestamp: new Date().toISOString()
             };
 
@@ -932,6 +1015,7 @@ export class UserController {
     /**
      * Get user activity timeline
      */
+
     static async getUserActivity(req: Request, res: Response, next: NextFunction) {
         try {
             const { id } = req.params;
@@ -947,4 +1031,447 @@ export class UserController {
             ValidationService.validateObjectId(id);
 
             // Permission check
-            if (id !== user.userId && !RBACService.canAccess(user.role, 'user:
+            if (id !== user.userId && !RBACService.canAccess(user.role, 'user:read')) {
+                throw new AppError('Insufficient permissions to view user activity', 403);
+            }
+
+            // Validate date range if provided
+            if (dateFrom || dateTo) {
+                ValidationService.validateDateRange(dateFrom as string, dateTo as string);
+            }
+
+            // Parse pagination
+            const pageNum = parseInt(page as string);
+            const limitNum = parseInt(limit as string);
+
+            // Get user to ensure they exist
+            const targetUser = await User.findById(id);
+            if (!targetUser) {
+                throw new AppError('User not found', 404);
+            }
+
+            // Check if requesting user can view activity for target user
+            if (user.role !== UserRole.SUPER_ADMIN) {
+                if (user.role === UserRole.TENANT_ADMIN) {
+                    // Tenant admin can only view users in their tenant
+                    if (targetUser.tenantId.toString() !== user.tenantId) {
+                        throw new AppError('Cannot view activity for users outside your tenant', 403);
+                    }
+                } else if (user.role === UserRole.USER) {
+                    // Regular users can only view their own activity
+                    if (id !== user.userId) {
+                        throw new AppError('Cannot view activity for other users', 403);
+                    }
+                }
+            }
+
+            // Get activity from AuditService
+            const activityData = await AuditService.getUserActivity(id, {
+                page: pageNum,
+                limit: limitNum,
+                type: type as string,
+                dateFrom: dateFrom as string,
+                dateTo: dateTo as string,
+                includeSensitive: user.role === UserRole.SUPER_ADMIN || id === user.userId
+            });
+
+            // Enhance activity data with additional context
+            const enhancedActivity = {
+                ...activityData,
+                user: {
+                    id: targetUser._id,
+                    firstName: targetUser.firstName,
+                    lastName: targetUser.lastName,
+                    email: targetUser.email,
+                    role: targetUser.role
+                },
+                meta: {
+                    requestedBy: user.userId,
+                    requestedAt: new Date().toISOString(),
+                    filters: {
+                        type: type || null,
+                        dateFrom: dateFrom || null,
+                        dateTo: dateTo || null
+                    }
+                }
+            };
+
+            const response: ApiResponse = {
+                success: true,
+                data: enhancedActivity,
+                message: 'User activity retrieved successfully',
+                timestamp: new Date().toISOString()
+            };
+
+            // Log access for audit
+            await AuditService.logActivity(user.userId, 'USER_ACTIVITY_VIEW', {
+                targetUserId: id,
+                filters: {
+                    type,
+                    dateFrom,
+                    dateTo,
+                    page: pageNum,
+                    limit: limitNum
+                }
+            });
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Export user data in specified format
+     */
+    static async exportUserData(req: Request, res: Response, next: NextFunction) {
+        try {
+            const user = req.user as AuthPayload;
+            const { format = 'csv', filters, fields, includeInactive } = req.query;
+
+            // Parse filters if provided
+            const parsedFilters = filters ? JSON.parse(filters as string) : {};
+
+            // Build query with RBAC
+            let baseQuery = RBACService.createDatabaseFilter({
+                id: user.userId,
+                role: user.role,
+                tenantId: user.tenantId
+            });
+
+            // Apply filters
+            if (includeInactive !== 'true') {
+                baseQuery.isActive = true;
+            }
+
+            // Apply additional filters
+            Object.assign(baseQuery, parsedFilters);
+
+            // Get users for export
+            const users = await User.find(baseQuery)
+                .populate('tenantId', 'name domain')
+                .select(fields as string || '-password -__v')
+                .lean();
+
+            // Export data
+            const exportData = await ExportService.exportUsers(
+                users,
+                format as 'csv' | 'xlsx' | 'pdf' | 'json',
+                user
+            );
+
+            // Log export
+            await AuditService.logActivity(user.userId, 'USER_EXPORT', {
+                format,
+                count: users.length,
+                filters: parsedFilters
+            });
+
+            // Set response headers
+            const filename = ExportService.generateFileName('users', format as string);
+            res.set({
+                'Content-Disposition': `attachment; filename="${filename}"`,
+                'Content-Type': ExportService.getContentType(format as string)
+            });
+
+            res.send(exportData);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Get users by specific role
+     */
+    static async getUsersByRole(req: Request, res: Response, next: NextFunction) {
+        try {
+            const user = req.user as AuthPayload;
+            const { role } = req.params;
+            const { page = '1', limit = '10', isActive, tenantId, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+
+            // Validate role
+            ValidationService.validateUserRole(role);
+
+            // Parse pagination
+            const pageNum = parseInt(page as string);
+            const limitNum = parseInt(limit as string);
+            const skip = (pageNum - 1) * limitNum;
+
+            // Build query with RBAC
+            let baseQuery = RBACService.createDatabaseFilter({
+                id: user.userId,
+                role: user.role,
+                tenantId: user.tenantId
+            });
+
+            // Add role filter
+            baseQuery.role = role as UserRole;
+
+            // Add optional filters
+            if (isActive !== undefined) {
+                baseQuery.isActive = isActive === 'true';
+            }
+
+            if (tenantId && user.role === UserRole.SUPER_ADMIN) {
+                ValidationService.validateObjectId(tenantId as string);
+                baseQuery.tenantId = tenantId;
+            }
+
+            // Get users and count
+            const [users, total] = await Promise.all([
+                User.find(baseQuery)
+                    .populate('tenantId', 'name domain')
+                    .sort({ [sortBy as string]: sortOrder === 'asc' ? 1 : -1 })
+                    .skip(skip)
+                    .limit(limitNum)
+                    .select('-password -__v')
+                    .lean(),
+                User.countDocuments(baseQuery)
+            ]);
+
+            // Enhance user data
+            const enhancedUsers = await Promise.all(
+                users.map(userDoc => UserService.enhanceUserData(userDoc, user))
+            );
+
+            const response: ApiResponse = {
+                success: true,
+                data: {
+                    users: enhancedUsers,
+                    pagination: {
+                        page: pageNum,
+                        limit: limitNum,
+                        total,
+                        totalPages: Math.ceil(total / limitNum),
+                        hasNext: pageNum * limitNum < total,
+                        hasPrev: pageNum > 1
+                    },
+                    role
+                },
+                message: `Found ${users.length} users with role ${role}`,
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Toggle user activation status
+     */
+    static async toggleUserStatus(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { id } = req.params;
+            const { reason } = req.body;
+            const user = req.user as AuthPayload;
+
+            ValidationService.validateObjectId(id);
+
+            // Get current user
+            const targetUser = await User.findById(id);
+            if (!targetUser) {
+                throw new AppError('User not found', 404);
+            }
+
+            // Permission checks
+            if (id === user.userId) {
+                throw new AppError('Cannot change your own status', 400);
+            }
+
+            if (!RBACService.hasRoleLevel(user.role, targetUser.role)) {
+                throw new AppError('Cannot modify user with equal or higher role', 403);
+            }
+
+            // Toggle status
+            const newStatus = !targetUser.isActive;
+            const updatedUser = await User.findByIdAndUpdate(
+                id,
+                {
+                    isActive: newStatus,
+                    ...(newStatus ? {
+                        activatedAt: new Date(),
+                        activatedBy: user.userId
+                    } : {
+                        deactivatedAt: new Date(),
+                        deactivatedBy: user.userId,
+                        deactivationReason: reason
+                    }),
+                    updatedAt: new Date()
+                },
+                { new: true }
+            ).select('-password');
+
+            // If deactivating, invalidate sessions
+            if (!newStatus) {
+                await UserService.invalidateUserSessions(id);
+            }
+
+            // Clear cache
+            await CacheService.invalidateUserCaches(id);
+
+            // Log activity
+            await AuditService.logActivity(user.userId, newStatus ? 'USER_ACTIVATE' : 'USER_DEACTIVATE', {
+                targetUserId: id,
+                reason
+            });
+
+            // Send notification
+            await NotificationService.sendUserStatusChangeNotification(
+                updatedUser!,
+                newStatus,
+                user.userId,
+                reason
+            );
+
+            const response: ApiResponse = {
+                success: true,
+                data: {
+                    user: await UserService.enhanceUserData(updatedUser!.toObject(), user),
+                    statusChanged: true,
+                    newStatus
+                },
+                message: `User ${newStatus ? 'activated' : 'deactivated'} successfully`,
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Reset user password (admin only)
+     */
+    static async resetUserPassword(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { id } = req.params;
+            const { newPassword, forceChange = true, notifyUser = true, reason } = req.body;
+            const user = req.user as AuthPayload;
+
+            ValidationService.validateObjectId(id);
+            ValidationService.validatePassword(newPassword);
+
+            // Get target user
+            const targetUser = await User.findById(id);
+            if (!targetUser) {
+                throw new AppError('User not found', 404);
+            }
+
+            // Permission checks
+            if (!RBACService.hasRoleLevel(user.role, targetUser.role)) {
+                throw new AppError('Cannot reset password for user with equal or higher role', 403);
+            }
+
+            // Update password
+            targetUser.password = newPassword;
+            if (forceChange) {
+                (targetUser as any).requirePasswordChange = true;
+            }
+            (targetUser as any).passwordResetAt = new Date();
+            (targetUser as any).passwordResetBy = user.userId;
+            await targetUser.save();
+
+            // Invalidate all user sessions
+            await UserService.invalidateUserSessions(id);
+
+            // Log activity
+            await AuditService.logActivity(user.userId, 'PASSWORD_RESET', {
+                targetUserId: id,
+                forceChange,
+                reason
+            });
+
+            // Send notification if requested
+            if (notifyUser) {
+                await NotificationService.sendPasswordResetNotification(
+                    targetUser,
+                    user.userId,
+                    forceChange
+                );
+            }
+
+            const response: ApiResponse = {
+                success: true,
+                data: {
+                    userId: id,
+                    forceChange,
+                    notificationSent: notifyUser
+                },
+                message: 'Password reset successfully',
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Get user permissions and access levels
+     */
+    static async getUserPermissions(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { id } = req.params;
+            const user = req.user as AuthPayload;
+
+            ValidationService.validateObjectId(id);
+
+            // Get target user
+            const targetUser = await User.findById(id).select('-password');
+            if (!targetUser) {
+                throw new AppError('User not found', 404);
+            }
+
+            // Permission check
+            if (id !== user.userId && !RBACService.canAccess(user.role, 'user:read')) {
+                throw new AppError('Insufficient permissions to view user permissions', 403);
+            }
+
+            // Get permissions data
+            const permissions = {
+                role: targetUser.role,
+                effectivePermissions: RBACService.getEffectivePermissions({
+                    id: targetUser._id.toString(),
+                    role: targetUser.role,
+                    tenantId: targetUser.tenantId?.toString()
+                }),
+                permissionGroups: RBACService.getUserPermissionGroups(targetUser.role),
+                inheritedPermissions: RBACService.getRolePermissions(targetUser.role),
+                roleHierarchy: {
+                    canManage: Object.values(UserRole).filter(role =>
+                        RBACService.hasRoleLevel(targetUser.role, role) && role !== targetUser.role
+                    ),
+                    isManagedBy: Object.values(UserRole).filter(role =>
+                        RBACService.hasRoleLevel(role, targetUser.role) && role !== targetUser.role
+                    )
+                }
+            };
+
+            const response: ApiResponse = {
+                success: true,
+                data: {
+                    user: {
+                        id: targetUser._id,
+                        email: targetUser.email,
+                        firstName: targetUser.firstName,
+                        lastName: targetUser.lastName,
+                        role: targetUser.role
+                    },
+                    permissions
+                },
+                message: 'User permissions retrieved successfully',
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+}
+

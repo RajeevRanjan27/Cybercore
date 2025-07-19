@@ -12,12 +12,30 @@ import {
     resetPasswordSchema,
     toggleStatusSchema,
     exportUsersSchema,
-    getUsersByRoleSchema
+    getUsersByRoleSchema,
+    accountDeletionSchema,
+    dataExportRequestSchema, changePasswordSchema, userPreferencesSchema,
+    activateUserSchema,
+    inviteUserSchema
 } from '@/core/validators/userValidators';
 import { upload } from '@/core/middlewares/upload';
 import { auditTrail } from '@/core/middlewares/auditTrail';
 import { cacheMiddleware } from '@/core/middlewares/cache';
 import { compressionMiddleware } from '@/core/middlewares/compression';
+import {AuditService} from "@/core/services/AuditService";
+import { UserService } from '@/core/services/UserService';
+import { AppError } from '@/core/middlewares/errorHandler';
+import { User } from '@/core/models/User';
+import {ExportService} from "@/core/services/ExportService";
+import {CacheService} from "@/core/services/CacheService";
+import { RBACService } from '@/core/services/RBACService';
+import {NotificationService} from "@/core/services/NotificationService";
+import { AuthService } from '@/core/services/AuthService';
+import jwt from "jsonwebtoken";
+import { config } from '@/config/env'; // NOT from 'process'
+import {ValidationService} from "@/core/services/ValidationService";
+import { UserRole } from '@/core/constants/roles';
+import { AuthPayload } from '@/core/types';
 
 const router = Router();
 
@@ -237,7 +255,10 @@ router.get('/:id/sessions',
     async (req, res, next) => {
         try {
             const { id } = req.params;
-            const user = req.user;
+            const user = req.user as AuthPayload | undefined;
+            if (!user) {
+                throw new AppError('User not authenticated', 401);
+            }
 
             // Permission check
             if (id !== user?.userId && !RBACService.canAccess(user.role, 'user:read')) {
@@ -267,8 +288,10 @@ router.delete('/:id/sessions',
     async (req, res, next) => {
         try {
             const { id } = req.params;
-            const user = req.user;
-
+            const user = req.user as AuthPayload | undefined;
+            if (!user) {
+                throw new AppError('User not authenticated', 401);
+            }
             // Permission check
             if (id !== user?.userId && !RBACService.canAccess(user.role, 'user:update')) {
                 throw new AppError('Insufficient permissions', 403);
@@ -374,8 +397,10 @@ router.post('/:id/restore',
         try {
             const { id } = req.params;
             const { reason } = req.body;
-            const user = req.user;
-
+            const user = req.user as AuthPayload | undefined;
+            if (!user) {
+                throw new AppError('User not authenticated', 401);
+            }
             ValidationService.validateObjectId(id);
 
             // Find the soft-deleted user
@@ -411,6 +436,10 @@ router.post('/:id/restore',
                 },
                 { new: true }
             ).select('-password');
+            // Check if update was successful
+            if (!restoredUser) {
+                throw new AppError('Failed to restore user', 500);
+            }
 
             // Clear caches
             await CacheService.invalidateUserCaches(id);
@@ -455,7 +484,10 @@ router.post('/invite',
     createRateLimiter(300000, 10), // 10 invites per 5 minutes
     async (req, res, next) => {
         try {
-            const user = req.user;
+            const user = req.user as AuthPayload | undefined;
+            if (!user) {
+                throw new AppError('User not authenticated', 401);
+            }
             const inviteData = req.body;
 
             // Generate invitation token
@@ -572,7 +604,10 @@ router.put('/:id/preferences',
     async (req, res, next) => {
         try {
             const { id } = req.params;
-            const user = req.user;
+            const user = req.user as AuthPayload | undefined;
+            if (!user) {
+                throw new AppError('User not authenticated', 401);
+            }
             const preferences = req.body;
 
             // Permission check

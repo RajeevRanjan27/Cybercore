@@ -13,6 +13,38 @@ export interface IUser extends Document {
     lastLogin?: Date;
     createdAt: Date;
     updatedAt: Date;
+
+    preferences?: {
+        language?: string;
+        timezone?: string;
+        theme?: 'light' | 'dark' | 'auto';
+        dateFormat?: string;
+        timeFormat?: string;
+        currency?: string;
+        notifications?: {
+            email?: boolean;
+            sms?: boolean;
+            push?: boolean;
+            inApp?: boolean;
+            digest?: string;
+        };
+        privacy?: {
+            profileVisibility?: string;
+            showEmail?: boolean;
+            showPhone?: boolean;
+            allowDirectMessages?: boolean;
+        };
+        accessibility?: {
+            fontSize?: string;
+            highContrast?: boolean;
+            reducedMotion?: boolean;
+            screenReader?: boolean;
+        };
+    };
+    deletedAt?: Date;
+    deletedBy?: string;
+    deletionReason?: string;
+    passwordChangedAt?: Date;
     comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
@@ -56,7 +88,38 @@ const userSchema = new Schema<IUser>({
     },
     lastLogin: {
         type: Date
-    }
+    },
+    preferences: {
+        language: { type: String, default: 'en' },
+        timezone: { type: String, default: 'UTC' },
+        theme: { type: String, enum: ['light', 'dark', 'auto'], default: 'light' },
+        dateFormat: { type: String, default: 'MM/DD/YYYY' },
+        timeFormat: { type: String, default: '12h' },
+        currency: { type: String, default: 'USD' },
+        notifications: {
+            email: { type: Boolean, default: true },
+            sms: { type: Boolean, default: false },
+            push: { type: Boolean, default: true },
+            inApp: { type: Boolean, default: true },
+            digest: { type: String, default: 'daily' }
+        },
+        privacy: {
+            profileVisibility: { type: String, default: 'team' },
+            showEmail: { type: Boolean, default: false },
+            showPhone: { type: Boolean, default: false },
+            allowDirectMessages: { type: Boolean, default: true }
+        },
+        accessibility: {
+            fontSize: { type: String, default: 'medium' },
+            highContrast: { type: Boolean, default: false },
+            reducedMotion: { type: Boolean, default: false },
+            screenReader: { type: Boolean, default: false }
+        }
+    },
+    deletedAt: Date,
+    deletedBy: String,
+    deletionReason: String,
+    passwordChangedAt: Date
 }, {
     timestamps: true
 });

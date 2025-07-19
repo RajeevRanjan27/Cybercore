@@ -1,14 +1,14 @@
 // src/core/services/UserService.ts
-import { IUser, User } from '@/core/models/User';
-import { RefreshToken } from '@/core/models/RefreshToken';
-import { UserRole } from '@/core/constants/roles';
-import { AuthPayload } from '@/core/types';
-import { AppError } from '@/core/middlewares/errorHandler';
-import { logger } from '@/core/infra/logger';
-import { AuditService } from '@/core/services/AuditService';
-import { NotificationService } from '@/core/services/NotificationService';
+import {IUser, User} from '@/core/models/User';
+import {RefreshToken} from '@/core/models/RefreshToken';
+import {UserRole} from '@/core/constants/roles';
+import {AuthPayload} from '@/core/types';
+import {AppError} from '@/core/middlewares/errorHandler';
+import {logger} from '@/core/infra/logger';
+import {AuditService} from '@/core/services/AuditService';
+import {NotificationService} from '@/core/services/NotificationService';
 import mongoose, {PipelineStage} from 'mongoose';
-import { v4 as uuidv4 } from 'uuid';
+import {v4 as uuidv4} from 'uuid';
 
 interface UserChange {
     field: string;
@@ -613,6 +613,16 @@ export class UserService {
             expiresAt: session.expiresAt,
             // Add more session details as needed
         }));
+    }
+    /**
+     * Get count of active sessions for a user
+     */
+    static async getActiveSessionsCount(userId: string): Promise<number> {
+        return RefreshToken.countDocuments({
+            userId,
+            isRevoked: false,
+            expiresAt: {$gt: new Date()}
+        });
     }
 
     /**
