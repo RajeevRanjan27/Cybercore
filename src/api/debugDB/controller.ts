@@ -1,0 +1,253 @@
+import { Request, Response, NextFunction } from 'express';
+import { ApiResponse } from '@/core/types';
+import mongoose from 'mongoose';
+
+interface DatabaseStats {
+    database: string;
+    status: string;
+    collections: string[];
+    documentCounts: Record<string, number>;
+    totalDocuments: number;
+    connectionState: string;
+}
+
+interface CollectionInfo {
+    name: string;
+    documentCount: number;
+    size?: number;
+    indexes?: number;
+}
+
+export class DbController {
+    /**
+     * Get database debug information including collections and document counts
+     */
+    static async getDebugDB(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            // Check if database connection exists
+            if (!mongoose.connection.db) {
+                const response: ApiResponse<null> = {
+                    success: false,
+                    message: 'Database connection not established',
+                    timestamp: new Date().toISOString()
+                };
+                res.status(500).json(response);
+                return;
+            }
+
+            const db = mongoose.connection.db;
+
+            // Get connection state
+            const connectionStates = {
+                0: 'disconnected',
+                1: 'connected',
+                2: 'connecting',
+                3: 'disconnecting'
+            };
+
+            // List all collections
+            const collections = await db.listCollections().toArray();
+            const collectionNames = collections.map(c => c.name);
+
+            // Count documents in each collection with better error handling
+            const collectionCounts: Record<string, number> = {};
+            let totalDocuments = 0;
+
+            await Promise.all(
+                collectionNames.map(async (name) => {
+                    try {
+                        const count = await db.collection(name).countDocuments();
+                        collectionCounts[name] = count;
+                        totalDocuments += count;
+                    } catch (error) {
+                        console.error(`Error counting documents in ${name}:`, error);
+                        collectionCounts[name] = -1; // Indicate error
+                    }
+                })
+            );
+
+            const databaseStats: DatabaseStats = {
+                database: mongoose.connection.name || 'unknown',
+                status: connectionStates[mongoose.connection.readyState as keyof typeof connectionStates] || 'unknown',
+                collections: collectionNames,
+                documentCounts: collectionCounts,
+                totalDocuments,
+                connectionState: `Ready State: ${mongoose.connection.readyState}`
+            };
+
+            const response: ApiResponse<DatabaseStats> = {
+                success: true,
+                data: databaseStats,
+                message: 'Database information retrieved successfully',
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Get detailed information about a specific collection
+     */
+    static async getCollectionInfo(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const { collectionName } = req.params;
+
+            if (!mongoose.connection.db) {
+                const response: ApiResponse<null> = {
+                    success: false,
+                    message: 'Database connection not established',
+                    timestamp: new Date().toISOString()
+                };
+                res.status(500).json(response);
+                return;
+            }
+
+            const db = mongoose.connection.db;
+            const collection = db.collection(collectionName);
+
+            // Check if collection exists
+            const collections = await db.listCollections({ name: collectionName }).toArray();
+            if (collections.length === 0) {
+                const response: ApiResponse<null> = {
+                    success: false,
+                    message: `Collection '${collectionName}' not found`,
+                    timestamp: new Date().toISOString()
+                };
+                res.status(404).json(response);
+                return;
+            }
+
+            // Get collection stats
+            const [documentCount, stats, indexes] = await Promise.all([
+                collection.countDocuments(),
+                collection.stats().catch(() => null),
+                collection.listIndexes().toArray().catch(() => [])
+            ]);
+
+            const collectionInfo: CollectionInfo = {
+                name: collectionName,
+                documentCount,
+                size: stats?.size || undefined,
+                indexes: indexes.length
+            };
+
+            const response: ApiResponse<CollectionInfo> = {
+                success: true,
+                data: collectionInfo,
+                message: `Collection '${collectionName}' information retrieved successfully`,
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Get sample documents from a collection
+     */
+    static async getSampleDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const { collectionName } = req.params;
+            const limit = parseInt(req.query.limit as string) || 5;
+            const skip = parseInt(req.query.skip as string) || 0;
+
+            if (!mongoose.connection.db) {
+                const response: ApiResponse<null> = {
+                    success: false,
+                    message: 'Database connection not established',
+                    timestamp: new Date().toISOString()
+                };
+                res.status(500).json(response);
+                return;
+            }
+
+            const db = mongoose.connection.db;
+            const collection = db.collection(collectionName);
+
+            // Check if collection exists
+            const collections = await db.listCollections({ name: collectionName }).toArray();
+            if (collections.length === 0) {
+                const response: ApiResponse<null> = {
+                    success: false,
+                    message: `Collection '${collectionName}' not found`,
+                    timestamp: new Date().toISOString()
+                };
+                res.status(404).json(response);
+                return;
+            }
+
+            // Get sample documents
+            const documents = await collection
+                .find({})
+                .skip(skip)
+                .limit(Math.min(limit, 50)) // Cap at 50 documents
+                .toArray();
+
+            const total = await collection.countDocuments();
+
+            const response: ApiResponse<{
+                documents: any[];
+                pagination: {
+                    skip: number;
+                    limit: number;
+                    total: number;
+                    hasMore: boolean;
+                };
+            }> = {
+                success: true,
+                data: {
+                    documents,
+                    pagination: {
+                        skip,
+                        limit,
+                        total,
+                        hasMore: skip + limit < total
+                    }
+                },
+                message: `Sample documents from '${collectionName}' retrieved successfully`,
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Health check for database connection
+     */
+    static async healthCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const isConnected = mongoose.connection.readyState === 1;
+
+            const response: ApiResponse<{
+                isConnected: boolean;
+                readyState: number;
+                host: string;
+                port: number;
+                database: string;
+            }> = {
+                success: isConnected,
+                data: {
+                    isConnected,
+                    readyState: mongoose.connection.readyState,
+                    host: mongoose.connection.host || 'unknown',
+                    port: mongoose.connection.port || 0,
+                    database: mongoose.connection.name || 'unknown'
+                },
+                message: isConnected ? 'Database connection is healthy' : 'Database connection is not healthy',
+                timestamp: new Date().toISOString()
+            };
+
+            res.status(isConnected ? 200 : 503).json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+}
