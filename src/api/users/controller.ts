@@ -14,7 +14,7 @@ import { ValidationService } from '@/core/services/ValidationService';
 import { ExportService } from '@/core/services/ExportService';
 import { SearchService } from '@/core/services/SearchService';
 import { logger } from '@/core/infra/logger';
-import mongoose from 'mongoose';
+import mongoose, {PipelineStage} from 'mongoose';
 
 interface UserQueryParams {
     page?: string;
@@ -126,7 +126,7 @@ export class UserController {
                 : '-password -__v';
 
             // Execute query with aggregation for better performance
-            const aggregationPipeline = [
+            const aggregationPipeline: PipelineStage[] = [
                 { $match: baseQuery },
                 { $sort: sortCriteria },
                 { $skip: skip },

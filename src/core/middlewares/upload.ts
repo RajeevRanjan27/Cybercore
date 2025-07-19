@@ -8,18 +8,25 @@ import { logger } from '@/core/infra/logger';
 const storage = multer.memoryStorage();
 
 // File filter function
-const fileFilter = (req: any, file: Express.Multer.File, cb: any) => {
+const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     try {
         // Check file type based on route
         const allowedTypes = getAllowedTypes(req.route?.path || req.path);
 
         if (allowedTypes.includes(file.mimetype)) {
+            // Accept the file
             cb(null, true);
         } else {
-            cb(new AppError(`File type ${file.mimetype} not allowed`, 400), false);
+            // Reject the file with a specific error
+            cb(new AppError(`File type ${file.mimetype} not allowed`, 400));
         }
     } catch (error) {
-        cb(error, false);
+        logger.error('Error in file filter', { error });
+        if (error instanceof Error) {
+            cb(error);
+        } else {
+            cb(new AppError('An unexpected error occurred during file upload.', 500));
+        }
     }
 };
 
@@ -76,7 +83,7 @@ export const profilePictureUpload = multer({
         if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new AppError('Only JPEG, PNG, and WebP images are allowed', 400), false);
+            cb(new AppError('Only JPEG, PNG, and WebP images are allowed.', 400));
         }
     },
     limits: {
@@ -97,7 +104,7 @@ export const documentUpload = multer({
         if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new AppError('Only PDF, DOC, DOCX, and TXT files are allowed', 400), false);
+            cb(new AppError('Only PDF, DOC, DOCX, and TXT files are allowed.', 400));
         }
     },
     limits: {

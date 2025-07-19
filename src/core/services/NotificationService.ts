@@ -66,6 +66,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'normal'
             });
@@ -103,6 +104,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'high'
             });
@@ -126,6 +128,34 @@ export class NotificationService {
         }
     }
 
+
+    /**
+     * Send account deletion confirmation
+     */
+    static async sendAccountDeletionConfirmation(
+        user: IUser,
+        reason: string
+    ): Promise<void> {
+        try {
+            const template = this.createAccountDeletionConfirmationTemplate(user, reason);
+
+            await this.sendEmail({
+                to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
+                ...template,
+                priority: 'high'
+            });
+
+            logger.info('Account deletion confirmation sent', {
+                userId: user._id,
+                email: user.email
+            });
+
+        } catch (error) {
+            logger.error('Failed to send account deletion confirmation:', error);
+        }
+    }
+
     /**
      * Send password reset notification
      */
@@ -139,6 +169,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'high'
             });
@@ -175,6 +206,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'high'
             });
@@ -239,6 +271,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'normal'
             });
@@ -266,6 +299,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'high'
             });
@@ -298,6 +332,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'normal'
             });
@@ -446,6 +481,7 @@ export class NotificationService {
 
             await this.sendEmail({
                 to: user.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
                 ...template,
                 priority: 'normal'
             });
@@ -690,6 +726,103 @@ export class NotificationService {
             .toLowerCase()
             .replace(/_/g, ' ')
             .replace(/^./, str => str.toUpperCase());
+    }
+
+    /**
+     * Send user invitation email
+     */
+    static async sendUserInvitation(
+        inviteData: any,
+        invitationToken: string
+    ): Promise<void> {
+        try {
+            const template = this.createInvitationTemplate(inviteData, invitationToken);
+
+            await this.sendEmail({
+                to: inviteData.email,
+                from: process.env.DEFAULT_FROM_EMAIL || 'noreply@cybercore.com',
+                ...template,
+                priority: 'normal'
+            });
+
+            logger.info('User invitation sent', {
+                email: inviteData.email,
+                role: inviteData.role
+            });
+
+        } catch (error) {
+            logger.error('Failed to send user invitation:', error);
+        }
+    }
+
+    private static createInvitationTemplate(
+        inviteData: any,
+        invitationToken: string
+    ): EmailTemplate {
+        const activationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/activate?token=${invitationToken}`;
+
+        return {
+            subject: 'You\'ve been invited to join CyberCore',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #5cb85c;">Welcome to CyberCore!</h2>
+                    <p>Hello ${inviteData.firstName},</p>
+                    <p>You've been invited to join CyberCore as a ${this.formatRole(inviteData.role)}.</p>
+                    ${inviteData.message ? `<p><em>"${inviteData.message}"</em></p>` : ''}
+                    <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <p><strong>To activate your account:</strong></p>
+                        <ol>
+                            <li>Click the activation link below</li>
+                            <li>Set up your password</li>
+                            <li>Start using the platform</li>
+                        </ol>
+                    </div>
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${activationUrl}" style="background: #5cb85c; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block;">Activate Account</a>
+                    </div>
+                    <p><small>This invitation expires in ${inviteData.expiresIn || 72} hours.</small></p>
+                    <p>If you have any questions, please contact our support team.</p>
+                    <p>Best regards,<br>The CyberCore Team</p>
+                </div>
+            `,
+            text: `Hello ${inviteData.firstName},\n\nYou've been invited to join CyberCore as a ${this.formatRole(inviteData.role)}.\n\n${inviteData.message ? `Message: "${inviteData.message}"\n\n` : ''}To activate your account, visit: ${activationUrl}\n\nThis invitation expires in ${inviteData.expiresIn || 72} hours.\n\nBest regards,\nThe CyberCore Team`
+        };
+    }
+
+    private static createAccountDeletionConfirmationTemplate(
+        user: IUser,
+        reason: string
+    ): EmailTemplate {
+        return {
+            subject: 'Account Deletion Request Received',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #d9534f;">Account Deletion Request</h2>
+                    <p>Hello ${user.firstName},</p>
+                    <p>We've received your request to delete your CyberCore account.</p>
+                    <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <p><strong>Important:</strong></p>
+                        <ul>
+                            <li>Your account has been deactivated</li>
+                            <li>You have 30 days to cancel this request</li>
+                            <li>After 30 days, your data will be permanently deleted</li>
+                        </ul>
+                    </div>
+                    <p><strong>Reason:</strong> ${reason}</p>
+                    <p>If you change your mind, please contact our support team within 30 days to restore your account.</p>
+                    <p>We're sorry to see you go. If there's anything we could have done better, please let us know.</p>
+                    <p>Best regards,<br>The CyberCore Team</p>
+                </div>
+            `,
+            text: `Hello ${user.firstName},\n\nWe've received your request to delete your CyberCore account.\n\nYour account has been deactivated and you have 30 days to cancel this request. After 30 days, your data will be permanently deleted.\n\nReason: ${reason}\n\nIf you change your mind, contact our support team within 30 days.\n\nBest regards,\nThe CyberCore Team`
+        };
+    }
+
+    private static formatRole(role: string): string {
+        return role
+            .split('_')
+            .map(word => word.charAt(0) + word.slice(1).toLowerCase())
+            .join(' ');
     }
 
     private static formatOperation(operation: string): string {

@@ -1,5 +1,5 @@
 // src/core/services/AuditService.ts
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, {Schema, Document, PipelineStage} from 'mongoose';
 import { logger } from '@/core/infra/logger';
 import { AuthPayload } from '@/core/types';
 
@@ -176,7 +176,7 @@ export class AuditService {
 
             const skip = (page - 1) * limit;
 
-            // Build query
+            // Build a query
             let query: any = { userId: new mongoose.Types.ObjectId(userId) };
 
             if (type) {
@@ -197,8 +197,8 @@ export class AuditService {
                 };
             }
 
-            // Execute query with aggregation for better performance
-            const pipeline = [
+            // Execute a query with aggregation for better performance
+            const pipeline: PipelineStage[] = [
                 { $match: query },
                 { $sort: { timestamp: -1 } },
                 { $skip: skip },
@@ -298,7 +298,7 @@ export class AuditService {
                 if (dateTo) query.timestamp.$lte = new Date(dateTo);
             }
 
-            const pipeline = [
+            const pipeline: PipelineStage [] = [
                 { $match: query },
                 { $sort: { timestamp: -1 } },
                 { $skip: skip },
@@ -370,7 +370,7 @@ export class AuditService {
                 baseQuery.tenantId = new mongoose.Types.ObjectId(user.tenantId);
             }
 
-            const pipeline = [
+            const pipeline: PipelineStage[] = [
                 { $match: baseQuery },
                 {
                     $facet: {
@@ -494,19 +494,31 @@ export class AuditService {
                 'IP Address', 'Details', 'Tenant'
             ];
 
-            const csvRows = logs.map(log => [
-                log.timestamp.toISOString(),
-                log.userId ? `${log.userId.firstName} ${log.userId.lastName} (${log.userId.email})` : 'Unknown',
-                log.action,
-                log.resource,
-                log.resourceId || '',
-                log.ipAddress || '',
-                JSON.stringify(log.details),
-                log.tenantId ? log.tenantId.name : ''
-            ]);
+            const csvRows = logs.map((log: any) => {
+                // Safely access populated user data
+                const userInfo = log.userId && typeof log.userId === 'object'
+                    ? `${log.userId.firstName || ''} ${log.userId.lastName || ''} (${log.userId.email || ''})`.trim()
+                    : 'Unknown';
+
+                // Safely access populated tenant data
+                const tenantInfo = log.tenantId && typeof log.tenantId === 'object'
+                    ? log.tenantId.name || 'Unknown'
+                    : '';
+
+                return [
+                    log.timestamp ? new Date(log.timestamp).toISOString() : '',
+                    userInfo,
+                    log.action || '',
+                    log.resource || '',
+                    log.resourceId || '',
+                    log.ipAddress || '',
+                    log.details ? JSON.stringify(log.details) : '',
+                    tenantInfo
+                ];
+            });
 
             const csvContent = [csvHeaders, ...csvRows]
-                .map(row => row.map(field => `"${field}"`).join(','))
+                .map(row => row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(','))
                 .join('\n');
 
             return csvContent;

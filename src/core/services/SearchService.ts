@@ -3,7 +3,7 @@ import { AuthPayload } from '@/core/types';
 import { UserRole } from '@/core/constants/roles';
 import { RBACService } from '@/core/services/RBACService';
 import { User } from '@/core/models/User';
-import mongoose from 'mongoose';
+import mongoose, {PipelineStage} from 'mongoose';
 
 interface SearchOptions {
     advanced?: boolean;
@@ -295,8 +295,8 @@ export class SearchService {
         return query;
     }
 
-    private static buildSearchPipeline(query: any, options: SearchOptions): any[] {
-        const pipeline = [
+    private static buildSearchPipeline(query: any, options: SearchOptions): PipelineStage[] {
+        const pipeline: PipelineStage[] = [
             { $match: query },
             {
                 $lookup: {
@@ -316,17 +316,26 @@ export class SearchService {
                     __v: 0
                 }
             },
-            { $sort: { score: { $meta: 'textScore' }, createdAt: -1 } },
+            { $sort: { createdAt: -1 } },
             { $limit: options.limit || 50 }
         ];
 
         // Add text search scoring if search query exists
         if (query.$or || query.$text) {
+            // Insert $addFields stage after $match
             pipeline.splice(1, 0, {
                 $addFields: {
                     score: { $meta: 'textScore' }
                 }
             });
+
+            // Update sort to include text score
+            const sortStageIndex = pipeline.findIndex(stage => '$sort' in stage);
+            if (sortStageIndex !== -1) {
+                pipeline[sortStageIndex] = {
+                    $sort: { score: { $meta: 'textScore' }, createdAt: -1 }
+                };
+            }
         }
 
         return pipeline;
@@ -334,7 +343,7 @@ export class SearchService {
 
     private static async buildFacets(baseQuery: any, user: AuthPayload): Promise<any> {
         try {
-            const facetPipeline = [
+            const facetPipeline: PipelineStage [] = [
                 { $match: baseQuery },
                 {
                     $facet: {
@@ -573,11 +582,11 @@ export class SearchService {
             sortOrder?: 'asc' | 'desc';
             includeScore?: boolean;
         }
-    ): any[] {
+    ): PipelineStage[] {
         const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc' } = options;
         const skip = (page - 1) * limit;
 
-        const pipeline = [
+        const pipeline: PipelineStage[] = [
             { $match: query }
         ];
 
