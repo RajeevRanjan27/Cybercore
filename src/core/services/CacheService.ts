@@ -83,12 +83,22 @@ export class CacheService {
      */
     static async initialize(): Promise<void> {
         try {
-            // In a real application, you would initialize Redis client here
+            // Try to initialize Redis
             await RedisService.initialize();
-            logger.info('Cache service initialized with memory cache');
+
+            // Check if Redis is actually connected
+            if (RedisService.isRedisConnected()) {
+                this.redisClient = RedisService.getClient();
+                this.isRedisAvailable = true;
+                logger.info('Cache service initialized with Redis');
+            } else {
+                throw new Error('Redis client not connected');
+            }
         } catch (error) {
             logger.warn('Redis not available, using memory cache:', error);
             this.isRedisAvailable = false;
+            this.redisClient = null;
+            logger.info('Cache service initialized with memory cache');
         }
     }
 
@@ -565,5 +575,93 @@ export class CacheService {
         }
         // For memory cache, we'd implement a simple Set simulation
         // but for now, we'll just skip if Redis isn't available
+    }
+
+    /**
+     * Check if cache service is connected and ready
+     */
+    static isConnected(): boolean {
+        try {
+            if (this.isRedisAvailable && this.redisClient) {
+                // For Redis, check if client is ready
+                return this.redisClient.isReady || this.redisClient.status === 'ready';
+            } else {
+                // Memory cache is always "connected"
+                return true;
+            }
+        } catch (error) {
+            logger.error('Cache isConnected check error:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Clear cache (alias for clearAll for backward compatibility)
+     */
+    static async clear(): Promise<void> {
+        return this.clearAll();
+    }
+
+    /**
+     * Get connection status with details
+     */
+    static getConnectionStatus(): {
+        connected: boolean;
+        type: 'redis' | 'memory';
+        details?: string
+    } {
+        try {
+            if (this.isRedisAvailable && this.redisClient) {
+                const connected = this.redisClient.isReady || this.redisClient.status === 'ready';
+                return {
+                    connected,
+                    type: 'redis',
+                    details: connected ? 'Redis connected' : `Redis status: ${this.redisClient.status || 'unknown'}`
+                };
+            } else {
+                return {
+                    connected: true,
+                    type: 'memory',
+                    details: 'Using in-memory cache'
+                };
+            }
+        } catch (error) {
+            return {
+                connected: false,
+                type: 'memory',
+                details: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`
+            };
+        }
+    }
+
+    /**
+     * Wait for cache service to be ready (useful for tests)
+     */
+    static async waitForReady(timeoutMs: number = 5000): Promise<boolean> {
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < timeoutMs) {
+            if (this.isConnected()) {
+                return true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        return false;
+    }
+
+    /**
+     * Force reconnection (useful for tests)
+     */
+    static async reconnect(): Promise<void> {
+        try {
+            if (this.redisClient) {
+                await this.redisClient.disconnect();
+            }
+            await this.initialize();
+        } catch (error) {
+            logger.error('Cache reconnect error:', error);
+            throw error;
+        }
     }
 }

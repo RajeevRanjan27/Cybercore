@@ -65,7 +65,7 @@ export class RedisService {
      * Check if Redis is connected
      */
     static isRedisConnected(): boolean {
-        return this.isConnected && this.client?.isReady;
+        return this.isConnected && this.client?.isReady === true;
     }
 
     /**
@@ -546,6 +546,57 @@ export class RedisService {
         } catch (error) {
             logger.error('Redis INFO error:', { section, error });
             return '';
+        }
+    }
+
+    /**
+     * Cleanup Redis connection
+     */
+    static async cleanup(): Promise<void> {
+        try {
+            if (this.client) {
+                await this.client.quit();
+            }
+            this.isConnected = false;
+            logger.info('RedisService cleaned up');
+        } catch (error) {
+            logger.error('RedisService cleanup error:', error);
+            throw error;
+        }
+    }
+
+
+    /**
+     * Ping Redis server
+     */
+    static async ping(): Promise<string> {
+        if (!this.isRedisConnected() || !this.client) {
+            throw new Error('Redis not connected');
+        }
+
+        try {
+            return await this.client.ping();
+        } catch (error) {
+            logger.error('Redis ping error:', error);
+            throw error;
+        }
+    }
+
+
+    /**
+     * Flush all Redis data
+     */
+    static async flushAll(): Promise<void> {
+        if (!this.isRedisConnected() || !this.client) {
+            throw new Error('Redis not connected');
+        }
+
+        try {
+            await this.client.flushAll();
+            logger.info('Redis flushed all data');
+        } catch (error) {
+            logger.error('Redis flushAll error:', error);
+            throw error;
         }
     }
 

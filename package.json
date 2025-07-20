@@ -8,23 +8,35 @@
     "build": "rimraf dist && tsc && tsc-alias",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "start:dev": "cross-env NODE_ENV=development nodemon",
+
     "test": "jest",
     "test:unit": "jest --testPathPattern=unit --coverage",
     "test:integration": "jest --testPathPattern=integration --runInBand",
     "test:e2e": "jest --testPathPattern=e2e --runInBand",
+    "test:security": "jest --testPathPattern=security --runInBand",
+    "test:performance": "jest --testPathPattern=performance --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage --watchAll=false",
     "test:ci": "jest --ci --coverage --watchAll=false --testTimeout=30000",
-    "docker:test:setup": "docker-compose -f docker-compose.yml up -d mongo redis",
-    "docker:test:teardown": "docker-compose -f docker-compose.yml down",
-    "test:docker": "npm run docker:test:setup && npm run test:wait && npm test",
-    "test:docker:unit": "npm run docker:test:setup && npm run test:wait && npm run test:unit",
-    "test:docker:integration": "npm run docker:test:setup && npm run test:wait && npm run test:integration",
-    "test:docker:coverage": "npm run docker:test:setup && npm run test:wait && npm run test:coverage",
+
+    "docker:services:up": "docker-compose up -d mongo redis",
+    "docker:services:down": "docker-compose down",
+    "docker:services:logs": "docker-compose logs -f mongo redis",
+    "docker:services:clean": "docker-compose down -v --remove-orphans",
+
     "test:wait": "node scripts/wait-for-services.js",
-    "test:with:docker": "cross-env NODE_ENV=test jest",
-    "test:docker:all": "docker-compose -f docker-compose.yml up -d mongo redis && npm run test:wait && npm run test:coverage && docker-compose -f docker-compose.yml stop mongo redis",
-    "test:cleanup": "npm run docker:test:teardown",
+    "test:docker": "bash scripts/test-docker.sh",
+    "test:docker:unit": "bash scripts/test-docker.sh unit",
+    "test:docker:integration": "bash scripts/test-docker.sh integration",
+    "test:docker:e2e": "bash scripts/test-docker.sh e2e",
+    "test:docker:coverage": "bash scripts/test-docker.sh coverage",
+    "test:docker:security": "bash scripts/test-docker.sh security",
+    "test:docker:performance": "bash scripts/test-docker.sh performance",
+    "test:docker:all": "bash scripts/test-docker.sh all",
+
+    "test:quick": "npm run docker:services:up && npm run test:wait && npm run test:unit",
+    "test:full": "npm run docker:services:up && npm run test:wait && npm run test:ci",
+
     "lint": "eslint src/**/*.ts --max-warnings=0",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
@@ -32,22 +44,27 @@
     "type-check": "tsc --noEmit",
     "security:check": "audit-ci --config audit-ci.json",
     "perf:check": "clinic doctor --on-port 'npm run start' -- --autocannon [ / ]",
+
     "db:seed": "ts-node -r tsconfig-paths/register src/core/infra/scripts/seed.ts",
     "db:migrate": "ts-node -r tsconfig-paths/register src/core/infra/scripts/migrate.ts",
     "db:reset": "ts-node -r tsconfig-paths/register src/core/infra/scripts/reset.ts",
+
     "docker:build": "docker build -t cybercore-api .",
     "docker:run": "docker run -p 3000:3000 --env-file .env cybercore-api",
     "docker:dev": "docker-compose -f docker-compose.dev.yml up --build",
     "docker:prod": "docker-compose -f docker-compose.prod.yml up -d",
+
     "deploy:staging": "npm run build && npm run docker:build && npm run deploy:staging:script",
     "deploy:production": "npm run build && npm run docker:build && npm run deploy:prod:script",
     "deploy:staging:script": "node scripts/deploy-staging.js",
     "deploy:prod:script": "node scripts/deploy-production.js",
+
     "health:check": "curl -f http://localhost:3000/health || exit 1",
     "logs:tail": "pm2 logs cybercore-api --lines 100",
     "monitor": "pm2 monit",
     "clean": "rimraf dist coverage node_modules/.cache",
     "prepare": "husky install",
+
     "oauth2:test": "ts-node -r tsconfig-paths/register scripts/test-oauth2.ts",
     "release": "standard-version",
     "release:patch": "npm run release -- --release-as patch",
@@ -114,39 +131,6 @@
     "src/**/*.{json,md}": [
       "prettier --write"
     ]
-  },
-  "jest": {
-    "preset": "ts-jest",
-    "testEnvironment": "node",
-    "roots": [
-      "<rootDir>/src",
-      "<rootDir>/tests"
-    ],
-    "testMatch": [
-      "**/__tests__/**/*.test.ts",
-      "**/?(*.)+(spec|test).ts"
-    ],
-    "transform": {
-      "^.+\\.ts$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "src/**/*.{ts,js}",
-      "!src/**/*.d.ts",
-      "!src/index.ts"
-    ],
-    "coverageDirectory": "coverage",
-    "coverageReporters": [
-      "text",
-      "lcov",
-      "html"
-    ],
-    "moduleNameMapping": {
-      "^@/(.*)$": "<rootDir>/src/$1"
-    },
-    "setupFilesAfterEnv": [
-      "<rootDir>/tests/setup.ts"
-    ],
-    "testTimeout": 10000
   },
   "engines": {
     "node": ">=18.0.0",

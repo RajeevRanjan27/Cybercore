@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid'; // Import uuid to generate unique IDs
 import { config } from '@/config/env';
 import { User, IUser } from '@/core/models/User';
 import { RefreshToken } from '@/core/models/RefreshToken';
@@ -28,17 +29,22 @@ export class AuthService {
             expiresIn: (config.JWT_REFRESH_EXPIRES_IN || '7d')
         };
 
-        const payload: AuthPayload = {
+        // Add a unique JWT ID (jti) to the access token payload to ensure uniqueness
+        const payload: AuthPayload & { jti: string } = {
             userId: String(user._id),
             tenantId: user.tenantId.toString(),
             role: user.role,
-            permissions: this.getUserPermissions(user.role)
+            permissions: this.getUserPermissions(user.role),
+            jti: uuidv4()
         };
 
         const accessToken = jwt.sign(payload, jwtSecret, accessTokenOptions);
 
-
-        const refreshTokenPayload = { userId: String(user._id) };
+        // Add a unique JWT ID (jti) to the refresh token payload as well
+        const refreshTokenPayload = {
+            userId: String(user._id),
+            jti: uuidv4()
+        };
         const refreshToken = jwt.sign(refreshTokenPayload, jwtRefreshSecret, refreshTokenOptions);
 
         return { accessToken, refreshToken };
@@ -92,7 +98,7 @@ export class AuthService {
 
     static verifyRefreshToken(token: string) {
         try {
-            return jwt.verify(token, config.JWT_REFRESH_SECRET) as { userId: string };
+            return jwt.verify(token, config.JWT_REFRESH_SECRET) as { userId: string, jti: string };
         } catch (error) {
             throw new AppError('Invalid or expired refresh token', 401);
         }
@@ -159,7 +165,7 @@ export class AuthService {
 
 
     /**
-     * Get user with caching for better performance
+     * Get user with caching for better performance. Always returns a full Mongoose document.
      */
     static async getCachedUser(userIdOrEmail: string): Promise<IUser | null> {
         let cacheKey: string;
@@ -176,26 +182,29 @@ export class AuthService {
         // Try cache first
         const cachedUser = await CacheService.get(cacheKey);
         if (cachedUser) {
-            return cachedUser;
+            // Re-hydrate a Mongoose document from the cached plain object
+            return new User(cachedUser);
         }
 
         // Get from database
         let user: IUser | null;
         if (isEmail) {
-            user = await User.findOne({ email: userIdOrEmail }).select('+password').lean();
+            // Fetch as a full Mongoose document, not a lean object
+            user = await User.findOne({ email: userIdOrEmail }).select('+password');
         } else {
             user = await User.findById(userIdOrEmail);
         }
 
         if (user) {
-            // Cache for 5 minutes (user data doesn't change often)
-            await CacheService.set(cacheKey, user.toObject(), 300);
+            // Cache the plain object version for efficiency
+            const userObject = user.toObject();
+            await CacheService.set(cacheKey, userObject, 300);
 
             // Also cache by the other identifier for faster lookups
             if (isEmail) {
-                await CacheService.set(`user:${user._id}`, user.toObject(), 300);
+                await CacheService.set(`user:${user._id}`, userObject, 300);
             } else {
-                await CacheService.set(`user_email:${user.email}`, user.toObject(), 300);
+                await CacheService.set(`user_email:${user.email}`, userObject, 300);
             }
         }
 

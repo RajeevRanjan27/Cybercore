@@ -74,8 +74,9 @@ export class ValidationService {
      * Validate email format
      */
     static validateEmail(email: string): void {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        // Use Joi for robust, standard-compliant email validation
+        const { error } = Joi.string().email().validate(email);
+        if (error) {
             throw new AppError('Invalid email format', 400);
         }
 
@@ -86,7 +87,8 @@ export class ValidationService {
         ];
 
         const domain = email.split('@')[1]?.toLowerCase();
-        if (disposableDomains.includes(domain)) {
+        // Ensure domain exists before checking against the list
+        if (domain && disposableDomains.includes(domain)) {
             throw new AppError('Disposable email addresses are not allowed', 400);
         }
     }

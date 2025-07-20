@@ -19,6 +19,13 @@ interface Config {
     // Redis
     REDIS_URL: string;
     REDIS_PASSWORD?: string;
+    REDIS_HOST: string;
+    REDIS_PORT: number;
+    REDIS_DB: number;
+
+    // Cache Configuration
+    CACHE_TTL: number;
+    CACHE_CHECK_PERIOD: number;
 
     // JWT
     JWT_SECRET: string;
@@ -82,9 +89,16 @@ export const config: Config = {
     // Database
     MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/cybercore',
 
-    // Redis
+    // Redis Configuration
     REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
-    REDIS_PASSWORD: process.env.REDIS_PASSWORD,
+    REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
+    REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+    REDIS_PORT: parseInt(process.env.REDIS_PORT || '6379'),
+    REDIS_DB: parseInt(process.env.REDIS_DB || '0'),
+
+    // Cache Configuration
+    CACHE_TTL: parseInt(process.env.CACHE_TTL || '300'), // 5 minutes default
+    CACHE_CHECK_PERIOD: parseInt(process.env.CACHE_CHECK_PERIOD || '60'), // 1 minute
 
     // JWT
     JWT_SECRET: process.env.JWT_SECRET || '6b3a091d08eae861666872f4945c14ba03e1bb9e9a62875a1ab9408cb33866c6',
