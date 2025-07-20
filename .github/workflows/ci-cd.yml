@@ -1,0 +1,408 @@
+# .github/workflows/ci-cd.yml
+name: CyberCore CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'hotfix/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+
+env:
+  NODE_VERSION: '18.x'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ============================================================================
+  # CODE QUALITY & SECURITY CHECKS
+  # ============================================================================
+
+  lint-and-test:
+    name: Code Quality & Testing
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: admin
+          MONGO_INITDB_ROOT_PASSWORD: admin123
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand(\"ping\").ok' --quiet"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+
+    strategy:
+      matrix:
+        node-version: ['18.x', '20.x']
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for better analysis
+
+      - name: 🏗️ Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm ls # Verify all dependencies are installed correctly
+
+      - name: 🔍 Lint Code
+        run: |
+          npm run lint
+          npm run lint:fix # Auto-fix what can be fixed
+        continue-on-error: false
+
+      - name: 📏 Check Code Format
+        run: |
+          npm run format:check
+          npm run format # Auto-format if needed
+
+      - name: 🏗️ Build Application
+        run: |
+          npm run build
+          ls -la dist/ # Verify build output
+        env:
+          NODE_ENV: production
+
+      - name: 🧪 Run Unit Tests
+        run: |
+          npm run test:unit -- --coverage
+          npm run test:integration
+        env:
+          NODE_ENV: test
+          MONGODB_URI: mongodb://admin:admin123@localhost:27017/cybercore_test?authSource=admin
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_secret_key_for_testing_only_not_for_production
+          JWT_REFRESH_SECRET: test_refresh_secret_key_for_testing_only
+
+      - name: 📊 Upload Coverage Reports
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: 🔒 Security Audit
+        run: |
+          npm audit --audit-level high
+          npm run security:check
+        continue-on-error: false
+
+      - name: 📋 Type Check
+        run: npm run type-check
+
+      - name: 🎯 Performance Check
+        run: npm run perf:check
+
+  # ============================================================================
+  # SECURITY SCANNING
+  # ============================================================================
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [lint-and-test]
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔒 Run Snyk Security Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+      - name: 🛡️ Run CodeQL Analysis
+        uses: github/codeql-action/init@v2
+        with:
+          languages: typescript, javascript
+
+      - name: 🔍 Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+      - name: 🔐 Run Semgrep Security Analysis
+        uses: returntocorp/semgrep-action@v1
+        with:
+          publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  # ============================================================================
+  # DOCKER BUILD & PUSH
+  # ============================================================================
+
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security-scan]
+    if: github.event_name != 'pull_request'
+
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📝 Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 🏗️ Build and Push Docker Image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: runner
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NODE_ENV=production
+            BUILD_NUMBER=${{ github.run_number }}
+            GIT_COMMIT=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
+
+      - name: 📋 Output Image
+        id: image
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}" >> $GITHUB_OUTPUT
+
+  # ============================================================================
+  # DEPLOYMENT TO STAGING
+  # ============================================================================
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🚀 Deploy to Staging
+        run: |
+          echo "Deploying to staging environment..."
+          # Add your staging deployment logic here
+          # Examples:
+          # - Deploy to AWS ECS
+          # - Deploy to Kubernetes
+          # - Deploy to staging server via SSH
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          DEPLOY_KEY: ${{ secrets.STAGING_DEPLOY_KEY }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+
+      - name: 🧪 Run E2E Tests on Staging
+        run: |
+          echo "Running E2E tests on staging..."
+          # npm run test:e2e:staging
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+
+      - name: 📊 Performance Testing
+        run: |
+          echo "Running performance tests..."
+          # npm run test:performance:staging
+        continue-on-error: true
+
+  # ============================================================================
+  # DEPLOYMENT TO PRODUCTION
+  # ============================================================================
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'release'
+    environment: production
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔄 Blue-Green Deployment Setup
+        run: |
+          echo "Setting up blue-green deployment..."
+          # Blue-green deployment logic here
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          PRODUCTION_DEPLOY_KEY: ${{ secrets.PRODUCTION_DEPLOY_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+
+      - name: 🚀 Deploy to Production (Blue Environment)
+        run: |
+          echo "Deploying to blue environment..."
+          # Deploy to blue environment
+          # curl -X POST "$DEPLOY_WEBHOOK_URL" \
+          #   -H "Authorization: Bearer $DEPLOY_TOKEN" \
+          #   -H "Content-Type: application/json" \
+          #   -d "{
+          #     \"environment\": \"blue\",
+          #     \"image\": \"$IMAGE\",
+          #     \"version\": \"${{ github.sha }}\"
+          #   }"
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+
+      - name: 🧪 Health Check (Blue Environment)
+        run: |
+          echo "Running health checks on blue environment..."
+          # Health check logic
+          # for i in {1..30}; do
+          #   if curl -f "$BLUE_HEALTH_URL"; then
+          #     echo "Blue environment is healthy"
+          #     break
+          #   fi
+          #   sleep 10
+          # done
+        env:
+          BLUE_HEALTH_URL: ${{ secrets.BLUE_HEALTH_URL }}
+
+      - name: 🔄 Switch Traffic to Blue
+        run: |
+          echo "Switching traffic to blue environment..."
+          # Traffic switching logic
+        env:
+          LOAD_BALANCER_API: ${{ secrets.LOAD_BALANCER_API }}
+
+      - name: 🗑️ Cleanup Green Environment
+        run: |
+          echo "Cleaning up previous green environment..."
+          # Cleanup logic
+        if: success()
+
+      - name: 📊 Post-Deployment Metrics
+        run: |
+          echo "Collecting post-deployment metrics..."
+          # Metrics collection
+        continue-on-error: true
+
+  # ============================================================================
+  # ROLLBACK WORKFLOW (Manual Trigger)
+  # ============================================================================
+
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔄 Rollback to Previous Version
+        run: |
+          echo "Rolling back to previous stable version..."
+          # Rollback logic
+        env:
+          ROLLBACK_TOKEN: ${{ secrets.ROLLBACK_TOKEN }}
+          PREVIOUS_VERSION: ${{ github.event.inputs.version }}
+
+  # ============================================================================
+  # NOTIFICATION & CLEANUP
+  # ============================================================================
+
+  notify:
+    name: Notify Teams
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+
+    steps:
+      - name: 📢 Slack Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+
+      - name: 📧 Email Notification
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: 587
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "🚨 CyberCore Deployment Failed"
+          to: ${{ secrets.ADMIN_EMAIL }}
+          from: "CyberCore CI/CD <noreply@cybercore.com>"
+          body: |
+            Deployment failed for commit ${{ github.sha }}
+            Branch: ${{ github.ref }}
+            Workflow: ${{ github.workflow }}
+            Please check the GitHub Actions logs for more details.
+
+  cleanup:
+    name: Cleanup Resources
+    runs-on: ubuntu-latest
+    needs: [deploy-production, deploy-staging]
+    if: always()
+
+    steps:
+      - name: 🧹 Cleanup Old Images
+        run: |
+          echo "Cleaning up old Docker images..."
+          # Keep only last 10 images
+          # docker images --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | 
+          # tail -n +11 | awk '{print $1}' | xargs -r docker rmi
+
+      - name: 📊 Update Deployment Metrics
+        run: |
+          echo "Updating deployment metrics..."
+          # Send metrics to monitoring system
+        continue-on-error: true
