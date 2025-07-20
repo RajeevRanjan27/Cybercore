@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { OAuth2Service } from '@/core/services/OAuth2Service';
+import { CacheService } from '@/core/services/CacheService';
 import axios from 'axios';
 import {Tenant} from "../../../src/core/models/Tenant";
 import {AppError} from "../../../src/core/middlewares/errorHandler";
@@ -10,12 +11,27 @@ import {User} from "../../../src/core/models/User";
 import {UserRole} from "../../../src/core/constants/roles";
 
 jest.mock('axios');
+jest.mock('@/core/services/CacheService');
+
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+const mockedCacheService = CacheService as jest.Mocked<typeof CacheService>;
 
 describe('OAuth2Service', () => {
     let testTenant: any;
 
+    beforeAll(() => {
+        // Mock environment variables for providers
+        process.env.GOOGLE_CLIENT_ID = 'your_google_client_id.apps.googleusercontent.com';
+        process.env.GOOGLE_CLIENT_SECRET = 'your_google_client_secret';
+        process.env.GITHUB_CLIENT_ID = 'your_github_client_id';
+        process.env.GITHUB_CLIENT_SECRET = 'your_github_client_secret';
+        process.env.BASE_URL = 'http://localhost:3000';
+    });
+
     beforeEach(async () => {
+        await Tenant.deleteMany({});
+        await User.deleteMany({});
+
         testTenant = await Tenant.create({
             name: 'OAuth2 Test Tenant',
             domain: 'oauth2test.com',
@@ -24,6 +40,9 @@ describe('OAuth2Service', () => {
         });
 
         OAuth2Service.initialize();
+
+        // **FIX:** Clear all mocks before each test to prevent state bleeding from one test to another.
+        jest.clearAllMocks();
     });
 
     describe('generateAuthURL', () => {
@@ -78,11 +97,6 @@ describe('OAuth2Service', () => {
     });
 
     describe('handleCallback', () => {
-        beforeEach(() => {
-            mockedAxios.post.mockClear();
-            mockedAxios.get.mockClear();
-        });
-
         it('should handle successful Google OAuth callback', async () => {
             // Mock token exchange response
             mockedAxios.post.mockResolvedValueOnce({
@@ -112,12 +126,16 @@ describe('OAuth2Service', () => {
                 get: jest.fn().mockReturnValue('Mozilla/5.0...')
             } as any;
 
-            const state = Buffer.from(JSON.stringify({
+            const stateData = {
                 nonce: 'test-nonce',
                 provider: 'google',
                 tenantId: testTenant._id.toString(),
                 timestamp: Date.now()
-            })).toString('base64url');
+            };
+            const state = Buffer.from(JSON.stringify(stateData)).toString('base64url');
+
+            // Mock the cache service for state validation
+            (mockedCacheService.get as jest.Mock).mockResolvedValue(stateData);
 
             const result = await OAuth2Service.handleCallback(
                 'google',
@@ -135,6 +153,7 @@ describe('OAuth2Service', () => {
 
         it('should handle OAuth provider errors', async () => {
             mockedAxios.post.mockRejectedValueOnce({
+                isAxiosError: true,
                 response: {
                     status: 400,
                     data: {
@@ -144,12 +163,15 @@ describe('OAuth2Service', () => {
                 }
             });
 
-            const mockRequest = { ip: '192.168.1.1' } as any;
-            const state = Buffer.from(JSON.stringify({
+            const mockRequest = {ip: '192.168.1.1'} as any;
+            const stateData = {
                 nonce: 'test-nonce',
                 provider: 'google',
                 timestamp: Date.now()
-            })).toString('base64url');
+            };
+            const state = Buffer.from(JSON.stringify(stateData)).toString('base64url');
+            (mockedCacheService.get as jest.Mock).mockResolvedValue(stateData);
+
 
             await expect(
                 OAuth2Service.handleCallback('google', 'invalid-code', state, mockRequest)
@@ -168,6 +190,7 @@ describe('OAuth2Service', () => {
                 isActive: true
             });
 
+            // Mock token exchange response
             mockedAxios.post.mockResolvedValueOnce({
                 data: {
                     access_token: 'mock-access-token',
@@ -175,32 +198,54 @@ describe('OAuth2Service', () => {
                 }
             });
 
+            // Mock user info response
             mockedAxios.get.mockResolvedValueOnce({
                 data: {
                     id: 'google-user-id',
                     email: 'existing@gmail.com',
                     given_name: 'Existing',
                     family_name: 'User',
+                    name: 'Existing User',
                     verified_email: true
                 }
             });
 
-            const mockRequest = { ip: '192.168.1.1' } as any;
-            const state = Buffer.from(JSON.stringify({
+            const mockRequest = {
+                ip: '192.168.1.1',
+                get: jest.fn().mockReturnValue('Mozilla/5.0...')
+            } as any;
+
+            const stateData = {
                 nonce: 'test-nonce',
                 provider: 'google',
+                tenantId: testTenant._id.toString(),
                 timestamp: Date.now()
-            })).toString('base64url');
+            };
+            const state = Buffer.from(JSON.stringify(stateData)).toString('base64url');
+            (mockedCacheService.get as jest.Mock).mockResolvedValue(stateData);
 
-            const result = await OAuth2Service.handleCallback(
-                'google',
-                'auth-code',
-                state,
-                mockRequest
-            );
+            try {
+                const result = await OAuth2Service.handleCallback(
+                    'google',
+                    'auth-code',
+                    state,
+                    mockRequest
+                );
 
-            expect(result.isNewUser).toBe(false);
-            expect(result.user.email).toBe('existing@gmail.com');
+                expect(result.isNewUser).toBe(false);
+                expect(result.user.email).toBe('existing@gmail.com');
+                expect(String(result.user._id)).toBe(String(existingUser._id));
+
+                // Verify OAuth connection was added
+                const updatedUser = await User.findById(existingUser._id);
+                expect(updatedUser?.oauth2Connections?.get('google')).toBeDefined();
+                expect(updatedUser?.oauth2Connections?.get('google')?.providerId).toBe('google-user-id');
+
+            } catch (error) {
+                console.error('Test failed with error:', error);
+                console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+                throw error;
+            }
         });
     });
 
@@ -214,20 +259,19 @@ describe('OAuth2Service', () => {
                 role: UserRole.USER,
                 tenantId: testTenant._id,
                 isActive: true,
-                oauth2Connections: {
-                    google: {
+                oauth2Connections: new Map([
+                    ['google', {
                         providerId: 'google-123',
                         accessToken: 'token',
                         connectedAt: new Date()
-                    }
-                }
+                    }]
+                ])
             });
 
             await OAuth2Service.disconnectProvider(String(user._id), 'google');
 
             const updatedUser = await User.findById(user._id);
-        // Cast to 'any' to bypass TypeScript's strict type checking for this dynamic property.
-            expect((updatedUser as any)?.oauth2Connections?.google).toBeUndefined();
+            expect(updatedUser?.oauth2Connections?.get('google')).toBeUndefined();
         });
 
         it('should prevent disconnecting the only auth method', async () => {
@@ -238,18 +282,48 @@ describe('OAuth2Service', () => {
                 role: UserRole.USER,
                 tenantId: testTenant._id,
                 isActive: true,
-                oauth2Connections: {
-                    google: {
+                registrationMethod: 'oauth2', // This is key to bypass password requirement
+                oauth2Connections: new Map([
+                    ['google', {
                         providerId: 'google-123',
                         accessToken: 'token',
                         connectedAt: new Date()
-                    }
-                }
+                    }]
+                ])
             });
 
             await expect(
                 OAuth2Service.disconnectProvider(String(user._id), 'google')
             ).rejects.toThrow(AppError);
+        });
+
+        it('should allow disconnecting one of multiple auth methods', async () => {
+            const user = await User.create({
+                email: 'multipleauth@test.com',
+                password: 'Password123!',
+                firstName: 'Multiple',
+                lastName: 'Auth',
+                role: UserRole.USER,
+                tenantId: testTenant._id,
+                isActive: true,
+                oauth2Connections: new Map([
+                    ['google', {
+                        providerId: 'google-123',
+                        accessToken: 'token',
+                        connectedAt: new Date()
+                    }],
+                    ['github', {
+                        providerId: 'github-456',
+                        accessToken: 'token',
+                        connectedAt: new Date()
+                    }]
+                ])
+            });
+
+            await OAuth2Service.disconnectProvider(String(user._id), 'google');
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser?.oauth2Connections?.get('google')).toBeUndefined();
+            expect(updatedUser?.oauth2Connections?.get('github')).toBeDefined();
         });
     });
 });

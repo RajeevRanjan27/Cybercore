@@ -16,6 +16,7 @@ import { SearchService } from '@/core/services/SearchService';
 import { logger } from '@/core/infra/logger';
 import mongoose, {PipelineStage} from 'mongoose';
 
+// Interfaces remain the same...
 interface UserQueryParams {
     page?: string;
     limit?: string;
@@ -60,6 +61,7 @@ interface UserStatsResponse {
         count: number;
     }>;
 }
+
 
 export class UserController {
     /**
@@ -317,7 +319,8 @@ export class UserController {
             logger.error('Error in getUsers:', error);
             next(error);
         }
-    }    /**
+    }
+    /**
      * Get detailed user information with comprehensive data
      */
     static async getUserById(req: Request, res: Response, next: NextFunction) {
@@ -373,6 +376,12 @@ export class UserController {
 
             // Enhance user data
             let enhancedUser = await UserService.enhanceUserData(foundUser, user);
+
+            // Transform _id to id for consistency with API expectations
+            if (enhancedUser._id) {
+                enhancedUser.id = enhancedUser._id.toString();
+                // Keep _id for backwards compatibility but ensure id is present
+            }
 
             // Add activity history if requested
             if (includeActivity === 'true') {
@@ -442,7 +451,7 @@ export class UserController {
         try {
             const { id } = req.params;
             const user = req.user as AuthPayload;
-            const updateData = req.body;
+            const updateData = { ...req.body }; // Create a copy to avoid mutation
 
             ValidationService.validateObjectId(id);
             ValidationService.validateUserUpdateData(updateData, user.role);
@@ -461,7 +470,32 @@ export class UserController {
                 throw new AppError('User not found', 404);
             }
 
-            // Advanced permission checks
+            // Track what was attempted to be changed (before filtering)
+            const originalUpdateData = { ...updateData };
+            const filteredFields: string[] = [];
+
+            // ============================================================================
+            // FIX: Moved self-update restrictions BEFORE permission checks.
+            // This prevents incorrect permission errors when a user updates their own profile
+            // with restricted fields (like 'role'), as these fields are now removed
+            // from `updateData` before the permission checks are performed.
+            // ============================================================================
+            if (id === user.userId) {
+                if (updateData.role) {
+                    filteredFields.push('role');
+                    delete updateData.role; // Users can't change their own role
+                }
+                if (updateData.isActive !== undefined) {
+                    filteredFields.push('isActive');
+                    delete updateData.isActive; // Users can't deactivate themselves
+                }
+                if (updateData.tenantId) {
+                    filteredFields.push('tenantId');
+                    delete updateData.tenantId; // Users can't change their own tenant
+                }
+            }
+
+            // Advanced permission checks on the *remaining* data
             if (updateData.role && updateData.role !== currentUser.role) {
                 if (!RBACService.canAccess(user.role, 'user:changeRole')) {
                     throw new AppError('Insufficient permissions to change user role', 403);
@@ -485,11 +519,25 @@ export class UserController {
                 }
             }
 
-            // Self-update restrictions
-            if (id === user.userId) {
-                delete updateData.role; // Users can't change their own role
-                delete updateData.isActive; // Users can't deactivate themselves
-                delete updateData.tenantId; // Users can't change their own tenant
+            // Check if we have any valid updates left after filtering
+            const validUpdateFields = Object.keys(updateData).filter(key =>
+                !['password', '__v', '_id', 'createdAt'].includes(key)
+            );
+
+            if (validUpdateFields.length === 0) {
+                // If no valid fields to update, return success but indicate no changes made
+                const response: ApiResponse = {
+                    success: true,
+                    data: {
+                        user: await UserService.enhanceUserData(currentUser.toObject(), user),
+                        changes: [],
+                        filteredFields, // Let the client know what was filtered out
+                    },
+                    message: 'User update completed with no changes were made due to restrictions or no valid fields provided',
+                    timestamp: new Date().toISOString()
+                };
+
+                return res.json(response);
             }
 
             // Sanitize and prepare update data
@@ -524,7 +572,9 @@ export class UserController {
             await AuditService.logActivity(user.userId, 'USER_UPDATE', {
                 targetUserId: id,
                 changes,
-                reason: updateData.reason || 'User profile update'
+                filteredFields,
+                originalUpdateData,
+                reason: originalUpdateData.reason || 'User profile update'
             });
 
             // Send notifications for significant changes
@@ -548,7 +598,8 @@ export class UserController {
                         previousValue: change.oldValue,
                         newValue: change.newValue,
                         changedAt: new Date().toISOString()
-                    }))
+                    })),
+                    filteredFields // Include information about what was filtered for self-updates
                 },
                 message: 'User updated successfully',
                 timestamp: new Date().toISOString()
@@ -557,7 +608,8 @@ export class UserController {
             logger.info('User updated successfully', {
                 userId: user.userId,
                 targetUserId: id,
-                changes: changes.length
+                changes: changes.length,
+                filteredFields: filteredFields.length
             });
 
             res.json(response);
@@ -886,9 +938,7 @@ export class UserController {
         }
     }
 
-    /**
-     * Advanced user search with multiple criteria
-     */
+    // Other methods remain unchanged...
     static async searchUsers(req: Request, res: Response, next: NextFunction) {
         try {
             const user = req.user as AuthPayload;
@@ -954,9 +1004,6 @@ export class UserController {
         }
     }
 
-    /**
-     * User profile picture upload and management
-     */
     static async uploadProfilePicture(req: Request, res: Response, next: NextFunction) {
         try {
             const { id } = req.params;
@@ -1016,10 +1063,6 @@ export class UserController {
             next(error);
         }
     }
-
-    /**
-     * Get user activity timeline
-     */
 
     static async getUserActivity(req: Request, res: Response, next: NextFunction) {
         try {
@@ -1126,9 +1169,6 @@ export class UserController {
         }
     }
 
-    /**
-     * Export user data in specified format
-     */
     static async exportUserData(req: Request, res: Response, next: NextFunction) {
         try {
             const user = req.user as AuthPayload;
@@ -1185,9 +1225,6 @@ export class UserController {
         }
     }
 
-    /**
-     * Get users by specific role
-     */
     static async getUsersByRole(req: Request, res: Response, next: NextFunction) {
         try {
             const user = req.user as AuthPayload;
@@ -1263,9 +1300,6 @@ export class UserController {
         }
     }
 
-    /**
-     * Toggle user activation status
-     */
     static async toggleUserStatus(req: Request, res: Response, next: NextFunction) {
         try {
             const { id } = req.params;
@@ -1347,9 +1381,6 @@ export class UserController {
         }
     }
 
-    /**
-     * Reset user password (admin only)
-     */
     static async resetUserPassword(req: Request, res: Response, next: NextFunction) {
         try {
             const { id } = req.params;
@@ -1415,9 +1446,6 @@ export class UserController {
         }
     }
 
-    /**
-     * Get user permissions and access levels
-     */
     static async getUserPermissions(req: Request, res: Response, next: NextFunction) {
         try {
             const { id } = req.params;
@@ -1477,6 +1505,4 @@ export class UserController {
             next(error);
         }
     }
-
 }
-

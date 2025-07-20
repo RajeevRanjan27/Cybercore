@@ -1,6 +1,6 @@
-import { Request, Response, NextFunction } from 'express';
-import { AuthService } from '@/core/services/AuthService';
-import { AppError } from './errorHandler';
+import {NextFunction, Request, Response} from 'express';
+import {AuthService} from '@/core/services/AuthService';
+import {AppError} from './errorHandler';
 
 export const authenticate = (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -11,9 +11,7 @@ export const authenticate = (req: Request, res: Response, next: NextFunction) =>
         }
 
         const token = authHeader.split(' ')[1];
-        const decoded = AuthService.verifyAccessToken(token);
-
-        req.user = decoded;
+        req.user = AuthService.verifyAccessToken(token);
         next();
     } catch (error) {
         next(error);

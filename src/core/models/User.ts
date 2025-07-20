@@ -2,9 +2,20 @@ import mongoose, { Schema, Document } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { UserRole } from '@/core/constants/roles';
 
+// Define a clear interface for a single OAuth connection
+interface OAuth2Connection {
+    providerId: string;
+    accessToken: string;
+    refreshToken?: string;
+    connectedAt: Date;
+    expiresAt?: Date;
+    scope?: string;
+    updatedAt?: Date;
+}
+
 export interface IUser extends Document {
     email: string;
-    password: string;
+    password?: string; // Password can be optional for OAuth-only users
     firstName: string;
     lastName: string;
     role: UserRole;
@@ -13,7 +24,9 @@ export interface IUser extends Document {
     lastLogin?: Date;
     createdAt: Date;
     updatedAt: Date;
-
+    oauth2Connections?: Map<string, OAuth2Connection>;
+    registrationMethod?: 'form' | 'oauth2' | 'invite';
+    registrationProvider?: string;
     preferences?: {
         language?: string;
         timezone?: string;
@@ -58,7 +71,7 @@ const userSchema = new Schema<IUser>({
     },
     password: {
         type: String,
-        required: true,
+        // Conditional requirement is now handled by the pre-validate hook below for robustness
         minlength: 6
     },
     firstName: {
@@ -89,6 +102,25 @@ const userSchema = new Schema<IUser>({
     lastLogin: {
         type: Date
     },
+    oauth2Connections: {
+        type: Map,
+        of: new Schema({
+            providerId: { type: String, required: true },
+            accessToken: { type: String, required: true },
+            refreshToken: String,
+            connectedAt: { type: Date, default: Date.now },
+            expiresAt: Date,
+            scope: String,
+            updatedAt: Date
+        }, { _id: false }),
+        default: {}
+    },
+    registrationMethod: {
+        type: String,
+        enum: ['form', 'oauth2', 'invite'],
+        default: 'form'
+    },
+    registrationProvider: String,
     preferences: {
         language: { type: String, default: 'en' },
         timezone: { type: String, default: 'UTC' },
@@ -124,16 +156,27 @@ const userSchema = new Schema<IUser>({
     timestamps: true
 });
 
+// Pre-validation hook to handle conditional password requirement
+userSchema.pre('validate', function(next) {
+    const user = this as IUser;
+    // Password is required if it's not an OAuth registration and there's no existing password
+    if (user.registrationMethod !== 'oauth2' && !user.password) {
+        this.invalidate('password', 'Path `password` is required.');
+    }
+    next();
+});
+
+
 // Password hashing middleware
 userSchema.pre('save', async function(next) {
-    if (!this.isModified('password')) return next();
-
+    if (!this.isModified('password') || !this.password) return next();
     this.password = await bcrypt.hash(this.password, 12);
     next();
 });
 
 // Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
+    if (!this.password) return false;
     return bcrypt.compare(candidatePassword, this.password);
 };
 

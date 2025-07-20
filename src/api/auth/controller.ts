@@ -93,7 +93,7 @@ export class AuthController {
             let user = await AuthService.getCachedUser(email);
             if (!user) {
                 // If not in cache, try database with email
-                user = await User.findOne({ email }).select('+password').lean();
+                user = await User.findOne({ email }).select('+password');
                 if (user) {
                     // Cache the user for future lookups
                     await CacheService.set(`user:${user._id}`, user.toObject(), 300);
