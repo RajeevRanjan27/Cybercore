@@ -1,9 +1,9 @@
 // ============================================================================
-// tests/unit/services/RBACService.test.ts
+// tests/unit/core/services/RBACService.test.ts
 // ============================================================================
 
 import { RBACService } from '@/core/services/RBACService';
-import {UserRole} from "../../../src/core/constants/roles";
+import {UserRole} from "@/core/constants/roles";
 
 describe('RBACService', () => {
     describe('canAccess', () => {

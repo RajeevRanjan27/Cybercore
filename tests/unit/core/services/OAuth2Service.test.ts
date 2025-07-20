@@ -5,10 +5,10 @@
 import { OAuth2Service } from '@/core/services/OAuth2Service';
 import { CacheService } from '@/core/services/CacheService';
 import axios from 'axios';
-import {Tenant} from "../../../src/core/models/Tenant";
-import {AppError} from "../../../src/core/middlewares/errorHandler";
-import {User} from "../../../src/core/models/User";
-import {UserRole} from "../../../src/core/constants/roles";
+import {Tenant} from "../../../../src/core/models/Tenant";
+import {AppError} from "../../../../src/core/middlewares/errorHandler";
+import {User} from "../../../../src/core/models/User";
+import {UserRole} from "../../../../src/core/constants/roles";
 
 jest.mock('axios');
 jest.mock('@/core/services/CacheService');

@@ -4,10 +4,10 @@
 
 import { UserService } from '@/core/services/UserService';
 import { ValidationService } from '@/core/services/ValidationService';
-import {Tenant} from "../../../src/core/models/Tenant";
-import {User} from "../../../src/core/models/User";
-import {UserRole} from "../../../src/core/constants/roles";
-import {AppError} from "../../../src/core/middlewares/errorHandler";
+import {Tenant} from "../../../../src/core/models/Tenant";
+import {User} from "../../../../src/core/models/User";
+import {UserRole} from "../../../../src/core/constants/roles";
+import {AppError} from "../../../../src/core/middlewares/errorHandler";
 
 describe('UserService', () => {
     let testTenant: any;

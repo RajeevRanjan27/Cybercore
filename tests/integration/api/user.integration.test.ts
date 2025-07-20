@@ -7,12 +7,12 @@ import express from 'express';
 import { userRoutes } from '@/api/users/routes';
 import { errorHandler } from '@/core/middlewares/errorHandler';
 import mongoose from "mongoose";
-import { logger } from "../../src/core/infra/logger";
-import { User, IUser } from "../../src/core/models/User";
-import { UserRole } from "../../src/core/constants/roles";
-import { AuthService } from "../../src/core/services/AuthService";
-import { Tenant, ITenant } from "../../src/core/models/Tenant";
-import { RefreshToken } from '../../src/core/models/RefreshToken';
+import { logger } from "@/core/infra/logger";
+import { User, IUser } from "@/core/models/User";
+import { UserRole } from "@/core/constants/roles";
+import { AuthService } from "@/core/services/AuthService";
+import { Tenant, ITenant } from "@/core/models/Tenant";
+import { RefreshToken } from '@/core/models/RefreshToken';
 
 describe('Users Integration Tests', () => {
     let app: express.Application;

@@ -238,7 +238,11 @@ export class ExportService {
                     const exportItem: any = {};
                     fields.forEach(field => {
                         const value = this.getNestedValue(item, field.key);
-                        exportItem[field.key] = this.formatValue(value, field);
+                        // FIX: Only add the key to the exported object if its value is not null or undefined.
+                        // This prevents sanitized (deleted) fields from appearing as empty strings.
+                        if (value !== null && value !== undefined) {
+                            exportItem[field.key] = this.formatValue(value, field);
+                        }
                     });
                     return exportItem;
                 })

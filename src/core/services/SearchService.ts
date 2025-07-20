@@ -134,16 +134,14 @@ export class SearchService {
 
         // Advanced search features
         if (options.advanced) {
-            // Role search
-            if (Object.values(UserRole).some(role =>
+            // FIX: Find ALL matching roles, not just the first one.
+            const matchingRoles = Object.values(UserRole).filter(role =>
                 role.toLowerCase().includes(term.toLowerCase())
-            )) {
-                const matchingRole = Object.values(UserRole).find(role =>
-                    role.toLowerCase().includes(term.toLowerCase())
-                );
-                if (matchingRole) {
-                    searchQueries.push({ role: matchingRole });
-                }
+            );
+            if (matchingRoles.length > 0) {
+                matchingRoles.forEach(role => {
+                    searchQueries.push({ role });
+                });
             }
 
             // Status search
@@ -544,7 +542,7 @@ export class SearchService {
     }
 
     private static escapeRegex(text: string): string {
-        return text.replace(/[.*+?^${}()|[\]\\]/g, '\\    private static async buildFacets(baseQuery: any, user');
+        return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     private static formatRoleLabel(role: string): string {
@@ -559,7 +557,7 @@ export class SearchService {
      */
     static buildTextSearchQuery(searchTerm: string): any {
         // Escape special characters for text search
-        const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\    private static async buildFacets(baseQuery: any, user');
+        const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
         return {
             $text: {
@@ -622,7 +620,7 @@ export class SearchService {
                 accountAge: {
                     $dateDiff: {
                         startDate: '$createdAt',
-                        endDate: '$NOW',
+                        endDate: '$$NOW',
                         unit: 'day'
                     }
                 },
@@ -632,7 +630,7 @@ export class SearchService {
                         then: {
                             $dateDiff: {
                                 startDate: '$lastLogin',
-                                endDate: '$NOW',
+                                endDate: '$$NOW',
                                 unit: 'day'
                             }
                         },

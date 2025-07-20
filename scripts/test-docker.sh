@@ -1,16 +1,42 @@
 #!/bin/bash
 
-# Exit on any error
+# ============================================================================
+# test-docker.sh
+#
+# This script orchestrates running the test suite within a Docker environment.
+# It ensures a clean, consistent environment for testing by managing Docker
+# services and running specific test commands.
+#
+# Usage:
+#   ./scripts/test-docker.sh [test_type]
+#
+# Arguments:
+#   test_type (optional): The type of test to run. Defaults to 'all'.
+#     - all: Runs the full CI suite (unit, integration, etc.) with coverage.
+#     - unit: Runs only unit tests.
+#     - integration: Runs only integration tests.
+#     - e2e: Runs only end-to-end tests.
+#     - security: Runs only security tests.
+#     - performance: Runs only performance tests.
+#     - coverage: Runs all tests and generates a coverage report.
+#
+# ============================================================================
+
+# Exit immediately if a command exits with a non-zero status.
 set -e
 
-# Colors for output
+# --- Configuration ---
+DOCKER_COMPOSE_FILE="docker-compose.test.yml"
+APP_SERVICE_NAME="app-test"
+
+# --- Colors for output ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
+# --- Helper Functions ---
 print_status() {
     echo -e "${BLUE}[TEST-DOCKER]${NC} $1"
 }
@@ -19,152 +45,70 @@ print_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Function to cleanup on exit
 cleanup() {
-    print_status "Cleaning up Docker services..."
-    docker-compose down --remove-orphans
-    docker-compose -f docker-compose.yml down --remove-orphans 2>/dev/null || true
+    print_status "Performing cleanup..."
+    docker-compose -f "$DOCKER_COMPOSE_FILE" down -v --remove-orphans
+    print_status "Cleanup complete."
 }
 
-# Set trap for cleanup on script exit
+# --- Main Logic ---
+
+# Trap EXIT signal to ensure cleanup runs
 trap cleanup EXIT
 
-# Function to check if Docker is running
-check_docker() {
-    print_status "Checking Docker availability..."
-    if ! docker info >/dev/null 2>&1; then
-        print_error "Docker is not running. Please start Docker first."
+# 1. Check for Docker
+print_status "Checking for Docker..."
+if ! command -v docker &> /dev/null || ! command -v docker-compose &> /dev/null; then
+    print_error "Docker and docker-compose are required. Please install them."
+    exit 1
+fi
+if ! docker info >/dev/null 2>&1; then
+    print_error "Docker daemon is not running. Please start Docker."
+    exit 1
+fi
+print_success "Docker is ready."
+
+# 2. Determine Test Command
+TEST_TYPE=${1:-"all"}
+NPM_COMMAND="test:ci" # Default to full CI run
+
+case $TEST_TYPE in
+    "unit"|"integration"|"e2e"|"security"|"performance"|"coverage")
+        NPM_COMMAND="test:$TEST_TYPE"
+        ;;
+    "all")
+        NPM_COMMAND="test:ci"
+        ;;
+    *)
+        print_error "Invalid test type '$TEST_TYPE'. Valid types are: unit, integration, e2e, security, performance, coverage, all."
         exit 1
-    fi
-    print_success "Docker is running"
-}
+        ;;
+esac
 
-# Function to wait for healthy services
-wait_for_healthy_services() {
-    print_status "Waiting for services to be healthy..."
+print_status "Test type selected: ${YELLOW}$TEST_TYPE${NC}"
+print_status "NPM command to run: ${YELLOW}npm run $NPM_COMMAND${NC}"
 
-    local max_attempts=30
-    local attempt=1
+# 3. Build and Run Docker Compose
+print_status "Building and starting test containers..."
+# Using --abort-on-container-exit to automatically stop all containers when the test runner finishes.
+# The exit code of the test runner will be the exit code of the `up` command.
+docker-compose -f "$DOCKER_COMPOSE_FILE" up --build --abort-on-container-exit
 
-    while [ $attempt -le $max_attempts ]; do
-        local mongo_healthy=false
-        local redis_healthy=false
+# Capture the exit code of the app-test container
+# The `docker-compose up` command with --abort-on-container-exit will propagate the exit code.
+EXIT_CODE=$?
 
-        # Check MongoDB health
-        if docker-compose exec -T mongo mongosh --eval "db.runCommand('ping').ok" --quiet >/dev/null 2>&1; then
-            mongo_healthy=true
-        fi
+# 4. Final Report
+echo # Newline for readability
+if [ $EXIT_CODE -eq 0 ]; then
+    print_success "All tests passed! 🎉"
+else
+    print_error "Tests failed with exit code $EXIT_CODE. ❌"
+fi
 
-        # Check Redis health
-        if docker-compose exec -T redis redis-cli ping >/dev/null 2>&1; then
-            redis_healthy=true
-        fi
-
-        if [ "$mongo_healthy" = true ] && [ "$redis_healthy" = true ]; then
-            print_success "All services are healthy!"
-            return 0
-        fi
-
-        print_status "Services not yet healthy (attempt $attempt/$max_attempts)..."
-        sleep 2
-        ((attempt++))
-    done
-
-    print_error "Services failed to become healthy within timeout"
-    return 1
-}
-
-# Main execution
-main() {
-    print_status "🚀 Starting Docker-based test environment..."
-
-    # Check Docker availability
-    check_docker
-
-    # Parse command line arguments
-    TEST_TYPE=${1:-"all"}
-
-    print_status "Test type: $TEST_TYPE"
-
-    # Start Docker services
-    print_status "Starting Docker services..."
-    docker-compose up -d mongo redis
-
-    # Wait for services to be healthy
-    if ! wait_for_healthy_services; then
-        print_error "Failed to start required services"
-        exit 1
-    fi
-
-    # Run the wait script to double-check connectivity
-    print_status "Verifying service connectivity..."
-    if ! npm run test:wait; then
-        print_error "Service connectivity check failed"
-        exit 1
-    fi
-
-    print_success "Services are ready!"
-
-    # Run tests based on type
-    print_status "Running tests..."
-
-    case $TEST_TYPE in
-        "unit")
-            print_status "Running unit tests..."
-            npm run test:unit
-            ;;
-        "integration")
-            print_status "Running integration tests..."
-            npm run test:integration
-            ;;
-        "e2e")
-            print_status "Running e2e tests..."
-            npm run test:e2e
-            ;;
-        "coverage")
-            print_status "Running tests with coverage..."
-            npm run test:coverage
-            ;;
-        "security")
-            print_status "Running security tests..."
-            npm test -- --testPathPattern=security
-            ;;
-        "performance")
-            print_status "Running performance tests..."
-            npm test -- --testPathPattern=performance
-            ;;
-        "all"|*)
-            print_status "Running all tests..."
-            npm run test:ci
-            ;;
-    esac
-
-    TEST_EXIT_CODE=$?
-
-    if [ $TEST_EXIT_CODE -eq 0 ]; then
-        print_success "All tests passed! 🎉"
-    else
-        print_error "Some tests failed! ❌"
-    fi
-
-    # Generate test report if coverage was run
-    if [ "$TEST_TYPE" = "coverage" ] || [ "$TEST_TYPE" = "all" ]; then
-        if [ -d "coverage" ]; then
-            print_status "Test coverage report generated in ./coverage/"
-            print_status "Open ./coverage/lcov-report/index.html to view detailed coverage"
-        fi
-    fi
-
-    return $TEST_EXIT_CODE
-}
-
-# Run main function
-main "$@"
+# The 'trap' will handle the cleanup.
+exit $EXIT_CODE

@@ -1,0 +1,10 @@
+{
+  // Inherit all the settings from the base tsconfig.json
+  "extends": "./tsconfig.json",
+
+  // Tell the TypeScript compiler to include all test files for Jest
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts"
+  ]
+}

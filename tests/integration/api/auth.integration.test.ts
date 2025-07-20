@@ -6,10 +6,10 @@ import request from 'supertest';
 import express from 'express';
 import { authRoutes } from '@/api/auth/routes';
 import { errorHandler } from '@/core/middlewares/errorHandler';
-import { User } from "../../src/core/models/User";
-import { UserRole } from "../../src/core/constants/roles";
-import { Tenant, ITenant } from "../../src/core/models/Tenant";
-import { RefreshToken } from '../../src/core/models/RefreshToken';
+import { User } from "../../../src/core/models/User";
+import { UserRole } from "../../../src/core/constants/roles";
+import { Tenant, ITenant } from "../../../src/core/models/Tenant";
+import { RefreshToken } from '../../../src/core/models/RefreshToken';
 
 describe('Auth Integration Tests', () => {
     let app: express.Application;

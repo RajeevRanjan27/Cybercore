@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { CacheService } from '@/core/services/CacheService';
-import {UserRole} from "../../../src/core/constants/roles";
+import {UserRole} from "../../../../src/core/constants/roles";
 
 describe('CacheService', () => {
     beforeEach(async () => {

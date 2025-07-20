@@ -1,9 +1,9 @@
 // ============================================================================
-// tests/unit/services/ValidationService.test.ts
+// tests/unit/core/services/ValidationService.test.ts
 // ============================================================================
 
-import {ValidationService} from "../../../src/core/services/ValidationService";
-import {AppError} from "../../../src/core/middlewares/errorHandler";
+import {ValidationService} from "@/core/services/ValidationService";
+import {AppError} from "@/core/middlewares/errorHandler";
 
 describe('ValidationService', () => {
     describe('validateObjectId', () => {

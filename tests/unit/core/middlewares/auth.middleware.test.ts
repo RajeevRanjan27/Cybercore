@@ -1,11 +1,11 @@
 // ============================================================================
-// tests/unit/middleware/auth.test.ts
+// tests/unit/middleware/auth.middleware.test.ts
 // ============================================================================
 
 import { Request, Response, NextFunction } from 'express';
 import { authenticate } from '@/core/middlewares/auth';
-import {AppError} from "../../../src/core/middlewares/errorHandler";
-import {UserRole} from "../../../src/core/constants/roles";
+import {AppError} from "../../../../src/core/middlewares/errorHandler";
+import {UserRole} from "../../../../src/core/constants/roles";
 import jwt from "jsonwebtoken";
 import {config} from "@/config/env";
 
