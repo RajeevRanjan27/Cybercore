@@ -5,6 +5,7 @@ import { Tenant } from '@/core/models/Tenant';
 import { AuthService } from '@/core/services/AuthService';
 import { AppError } from '@/core/middlewares/errorHandler';
 import { ApiResponse } from '@/core/types';
+import {CacheService} from "@/core/services/CacheService";
 
 export class AuthController {
     static async register(req: Request, res: Response, next: NextFunction) {
@@ -74,27 +75,69 @@ export class AuthController {
     static async login(req: Request, res: Response, next: NextFunction) {
         try {
             const { email, password } = req.body;
+            const ipAddress = req.ip;
 
-            // Find user
-            const user = await User.findOne({ email }).select('+password');
+            // Check if account is locked due to failed attempts
+            const lockStatus = await AuthService.isAccountLocked(email, ipAddress);
+            if (lockStatus.locked) {
+                const response: ApiResponse = {
+                    success: false,
+                    error: lockStatus.reason,
+                    message: `Account temporarily locked. Try again in ${Math.ceil((lockStatus.retryAfter || 0) / 60)} minutes.`,
+                    timestamp: new Date().toISOString()
+                };
+                return res.status(429).json(response);
+            }
+
+            // Find user (with caching)
+            let user = await AuthService.getCachedUser(email);
+            if (!user) {
+                // If not in cache, try database with email
+                user = await User.findOne({ email }).select('+password').lean();
+                if (user) {
+                    // Cache the user for future lookups
+                    await CacheService.set(`user:${user._id}`, user.toObject(), 300);
+                }
+            }
+
             if (!user || !user.isActive) {
+                // Track failed login attempt
+                await AuthService.trackFailedLogin(email, ipAddress);
                 throw new AppError('Invalid credentials', 401);
             }
 
             // Check password
             const isPasswordValid = await user.comparePassword(password);
             if (!isPasswordValid) {
+                // Track failed login attempt
+                await AuthService.trackFailedLogin(email, ipAddress);
                 throw new AppError('Invalid credentials', 401);
+            }
+
+            // Clear failed login attempts after successful login
+            await AuthService.clearFailedLoginAttempts(email, ipAddress);
+
+            // Check for suspicious activity
+            const isSuspicious = await AuthService.checkSuspiciousActivity(user._id.toString(), ipAddress || '');
+            if (isSuspicious) {
+                // Log suspicious activity but don't block (you could add more logic here)
+                console.log(`⚠️ Suspicious login detected for user ${user._id} from IP ${ipAddress}`);
+
+                // You could send email notification, require 2FA, etc.
+                // For now, we'll just log it
             }
 
             // Update last login
             user.lastLogin = new Date();
             await user.save();
 
+            // Track login activity
+            await AuthService.trackLogin(user._id.toString(), ipAddress);
+
             // Generate tokens
             const tokens = AuthService.generateTokens(user);
 
-            // Store refresh token
+            // Store refresh token (this now updates cache too)
             await AuthService.storeRefreshToken(user._id.toString(), tokens.refreshToken);
 
             const response: ApiResponse = {
@@ -108,7 +151,8 @@ export class AuthController {
                         role: user.role,
                         tenantId: user.tenantId
                     },
-                    tokens
+                    tokens,
+                    ...(isSuspicious && { securityAlert: 'Login from new location detected' })
                 },
                 message: 'Login successful',
                 timestamp: new Date().toISOString()
@@ -118,9 +162,7 @@ export class AuthController {
         } catch (error) {
             next(error);
         }
-    }
-
-    static async refreshToken(req: Request, res: Response, next: NextFunction) {
+    }    static async refreshToken(req: Request, res: Response, next: NextFunction) {
         try {
             const { refreshToken } = req.body;
 

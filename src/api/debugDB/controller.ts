@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiResponse } from '@/core/types';
 import mongoose from 'mongoose';
+import {CacheService} from "@/core/services/CacheService";
 
 interface DatabaseStats {
     database: string;
@@ -87,6 +88,141 @@ export class DbController {
             next(error);
         }
     }
+
+    /**
+     * Health check for database and Redis connection
+     */
+    static async healthCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const isDbConnected = mongoose.connection.readyState === 1;
+            const cacheStats = await CacheService.getStats();
+
+            const response: ApiResponse<{
+                database: {
+                    isConnected: boolean;
+                    readyState: number;
+                    host: string;
+                    port: number;
+                    database: string;
+                };
+                cache: any;
+            }> = {
+                success: isDbConnected && (cacheStats.connected || cacheStats.type === 'memory'),
+                data: {
+                    database: {
+                        isConnected: isDbConnected,
+                        readyState: mongoose.connection.readyState,
+                        host: mongoose.connection.host || 'unknown',
+                        port: mongoose.connection.port || 0,
+                        database: mongoose.connection.name || 'unknown'
+                    },
+                    cache: cacheStats
+                },
+                message: isDbConnected ? 'Services are healthy' : 'Database connection issue',
+                timestamp: new Date().toISOString()
+            };
+
+            res.status(response.success ? 200 : 503).json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+    /**
+     * Test cache functionality
+     */
+    static async testCache(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const testKey = `test:${Date.now()}`;
+            const testValue = {
+                message: 'Hello from Redis!',
+                timestamp: new Date().toISOString(),
+                random: Math.random()
+            };
+
+            // Test SET operation
+            await CacheService.set(testKey, testValue, 60); // 60 seconds TTL
+
+            // Test GET operation
+            const retrieved = await CacheService.get(testKey);
+
+            // Test cache stats
+            const stats = await CacheService.getStats();
+
+            const response: ApiResponse<any> = {
+                success: true,
+                data: {
+                    test: {
+                        key: testKey,
+                        originalValue: testValue,
+                        retrievedValue: retrieved,
+                        valuesMatch: JSON.stringify(testValue) === JSON.stringify(retrieved)
+                    },
+                    cacheStats: stats
+                },
+                message: 'Cache test completed successfully',
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    /**
+     * Test Redis rate limiting
+     */
+    static async testRateLimit(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const clientId = req.ip || 'test-client';
+            const windowMs = 60000; // 1 minute
+            const maxRequests = 5;
+
+            const rateLimitResult = await CacheService.rateLimit(
+                `test:ratelimit:${clientId}`,
+                windowMs,
+                maxRequests
+            );
+
+            const response: ApiResponse<any> = {
+                success: true,
+                data: {
+                    rateLimit: rateLimitResult,
+                    clientId,
+                    windowMs,
+                    maxRequests
+                },
+                message: rateLimitResult.allowed ? 'Request allowed' : 'Rate limit exceeded',
+                timestamp: new Date().toISOString()
+            };
+
+            res.status(rateLimitResult.allowed ? 200 : 429).json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+
+    /**
+     * Get cache statistics
+     */
+    static async getCacheStats(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const stats = await CacheService.getStats();
+
+            const response: ApiResponse<any> = {
+                success: true,
+                data: stats,
+                message: 'Cache statistics retrieved successfully',
+                timestamp: new Date().toISOString()
+            };
+
+            res.json(response);
+        } catch (error) {
+            next(error);
+        }
+    }
+
 
     /**
      * Get detailed information about a specific collection
@@ -219,35 +355,4 @@ export class DbController {
         }
     }
 
-    /**
-     * Health check for database connection
-     */
-    static async healthCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
-        try {
-            const isConnected = mongoose.connection.readyState === 1;
-
-            const response: ApiResponse<{
-                isConnected: boolean;
-                readyState: number;
-                host: string;
-                port: number;
-                database: string;
-            }> = {
-                success: isConnected,
-                data: {
-                    isConnected,
-                    readyState: mongoose.connection.readyState,
-                    host: mongoose.connection.host || 'unknown',
-                    port: mongoose.connection.port || 0,
-                    database: mongoose.connection.name || 'unknown'
-                },
-                message: isConnected ? 'Database connection is healthy' : 'Database connection is not healthy',
-                timestamp: new Date().toISOString()
-            };
-
-            res.status(isConnected ? 200 : 503).json(response);
-        } catch (error) {
-            next(error);
-        }
-    }
 }

@@ -69,6 +69,28 @@ export class RBACService {
     }
 
     /**
+     * Get permission groups that a user role has access to
+     */
+    static getUserPermissionGroups(userRole: UserRole): string[] {
+        const userPermissions = this.getRolePermissions(userRole);
+        const accessibleGroups: string[] = [];
+
+        // Check each permission group
+        Object.entries(PERMISSION_GROUPS).forEach(([groupName, groupPermissions]) => {
+            // Check if user has at least one permission from this group
+            const hasGroupAccess = groupPermissions.some(permission =>
+                userPermissions.includes(permission)
+            );
+
+            if (hasGroupAccess) {
+                accessibleGroups.push(groupName);
+            }
+        });
+
+        return accessibleGroups;
+    }
+
+    /**
      * Filter data based on user role and context
      */
     static filterByRole<T extends DataWithOwnership>(

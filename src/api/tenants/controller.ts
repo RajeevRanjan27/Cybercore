@@ -67,7 +67,9 @@ export class TenantController {
                         page,
                         limit,
                         total,
-                        totalPages: Math.ceil(total / limit)
+                        totalPages: Math.ceil(total / limit),
+                        hasNext: page * limit < total,
+                        hasPrev: page > 1
                     }
                 },
                 timestamp: new Date().toISOString()

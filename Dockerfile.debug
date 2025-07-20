@@ -1,0 +1,19 @@
+# Simple development Dockerfile for debugging
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Install ts-node and tsconfig-paths globally for easier debugging
+RUN npm install -g ts-node tsconfig-paths
+
+EXPOSE 3000
+
+# Debug command that shows what's happening
+CMD ["sh", "-c", "echo 'Starting app...' && ls -la src/ && echo 'Running with ts-node...' && npx ts-node -r tsconfig-paths/register src/index.ts"]

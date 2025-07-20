@@ -17,6 +17,21 @@ router.get('/health',
     DbController.healthCheck
 );
 
+// Cache test endpoints (no auth required for testing)
+router.get('/test-cache',
+    DbController.testCache
+);
+
+router.get('/test-ratelimit',
+    DbController.testRateLimit
+);
+
+// Cache statistics endpoint
+router.get('/cache',
+    authorize('database:admin'),
+    DbController.getCacheStats
+);
+
 // Database overview endpoint
 router.get('/overview',
     authorize('database:admin'),
