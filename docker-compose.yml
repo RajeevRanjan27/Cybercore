@@ -47,10 +47,11 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3000
-      - MONGODB_URI=mongodb://mongodb:27017/cybercore_dev
+      - MONGODB_URI=mongodb://admin:admin123@mongodb:27017/cybercore_dev?authSource=admin
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=development_secret_key_change_in_production
       - JWT_REFRESH_SECRET=development_refresh_secret_change_in_production
+      - REDIS_PASSWORD=redis123
     depends_on:
       mongodb:
         condition: service_healthy
