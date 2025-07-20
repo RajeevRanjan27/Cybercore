@@ -1,6 +1,7 @@
 // src/core/services/CacheService.ts
 import { logger } from '@/core/infra/logger';
 import { AuthPayload } from '@/core/types';
+import {RedisService} from "@/core/services/RedisService";
 
 // In-memory cache for development/fallback
 class MemoryCache {
@@ -83,11 +84,7 @@ export class CacheService {
     static async initialize(): Promise<void> {
         try {
             // In a real application, you would initialize Redis client here
-            // const redis = require('redis');
-            // this.redisClient = redis.createClient(process.env.REDIS_URL);
-            // await this.redisClient.connect();
-            // this.isRedisAvailable = true;
-
+            await RedisService.initialize();
             logger.info('Cache service initialized with memory cache');
         } catch (error) {
             logger.warn('Redis not available, using memory cache:', error);
@@ -523,5 +520,50 @@ export class CacheService {
         } catch (error) {
             logger.error('Cache cleanup error:', error);
         }
+    }
+
+    /**
+     * Rate limiting functionality
+     */
+    static async rateLimit(
+        key: string,
+        windowMs: number,
+        maxRequests: number
+    ): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
+        try {
+            if (RedisService.isRedisConnected()) {
+                return await RedisService.rateLimit(key, windowMs, maxRequests);
+            } else {
+                // Simple memory-based rate limiting fallback
+                const rateLimitKey = `rate_limit:${key}`;
+                const now = Date.now();
+                const window = Math.floor(now / windowMs);
+                const windowKey = `${rateLimitKey}:${window}`;
+
+                const current = (this.memoryCache.get(windowKey) || 0) + 1;
+                this.memoryCache.set(windowKey, current, Math.ceil(windowMs / 1000));
+
+                const allowed = current <= maxRequests;
+                const remaining = Math.max(0, maxRequests - current);
+                const resetTime = (window + 1) * windowMs;
+
+                return { allowed, remaining, resetTime };
+            }
+        } catch (error) {
+            logger.error('Cache rate limit error:', error);
+            return { allowed: true, remaining: maxRequests - 1, resetTime: Date.now() + windowMs };
+        }
+    }
+
+
+    /**
+     * Set operations for Redis
+     */
+    static async setAdd(setKey: string, value: string): Promise<void> {
+        if (RedisService.isRedisConnected()) {
+            await RedisService.setAdd(setKey, value);
+        }
+        // For memory cache, we'd implement a simple Set simulation
+        // but for now, we'll just skip if Redis isn't available
     }
 }

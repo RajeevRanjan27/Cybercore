@@ -1,0 +1,43 @@
+services:
+  # Debug app service
+  app-debug:
+    build:
+      context: .
+      dockerfile: Dockerfile.debug
+    container_name: cybercore-debug
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MONGODB_URI=mongodb://mongodb:27017/cybercore_dev
+      - JWT_SECRET=development_secret_key_change_in_production
+      - JWT_REFRESH_SECRET=development_refresh_secret_change_in_production
+    depends_on:
+      - mongodb
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - cybercore-network
+
+  # MongoDB service
+  mongodb:
+    image: mongo:7.0
+    container_name: cybercore-mongodb-debug
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=cybercore_dev
+    volumes:
+      - mongodb_debug_data:/data/db
+    networks:
+      - cybercore-network
+
+volumes:
+  mongodb_debug_data:
+    driver: local
+
+networks:
+  cybercore-network:
+    driver: bridge
