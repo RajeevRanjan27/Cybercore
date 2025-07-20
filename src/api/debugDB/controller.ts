@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiResponse } from '@/core/types';
-import mongoose from 'mongoose';
+import mongoose, {Collection} from 'mongoose';
 import {CacheService} from "@/core/services/CacheService";
+import {AppError} from "@/core/middlewares/errorHandler";
 
 interface DatabaseStats {
     database: string;
@@ -90,7 +91,7 @@ export class DbController {
     }
 
     /**
-     * Health check for database and Redis connection
+     * Health check for a database and Redis connection
      */
     static async healthCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
@@ -148,7 +149,7 @@ export class DbController {
             // Test cache stats
             const stats = await CacheService.getStats();
 
-            const response: ApiResponse<any> = {
+            const response: ApiResponse = {
                 success: true,
                 data: {
                     test: {
@@ -184,7 +185,7 @@ export class DbController {
                 maxRequests
             );
 
-            const response: ApiResponse<any> = {
+            const response: ApiResponse = {
                 success: true,
                 data: {
                     rateLimit: rateLimitResult,
@@ -210,7 +211,7 @@ export class DbController {
         try {
             const stats = await CacheService.getStats();
 
-            const response: ApiResponse<any> = {
+            const response: ApiResponse = {
                 success: true,
                 data: stats,
                 message: 'Cache statistics retrieved successfully',
@@ -224,42 +225,32 @@ export class DbController {
     }
 
 
+
     /**
      * Get detailed information about a specific collection
      */
     static async getCollectionInfo(req: Request, res: Response, next: NextFunction): Promise<void> {
         try {
             const { collectionName } = req.params;
+            const collection = await this._getAndVerifyCollection(collectionName, res);
 
-            if (!mongoose.connection.db) {
-                const response: ApiResponse<null> = {
-                    success: false,
-                    message: 'Database connection not established',
-                    timestamp: new Date().toISOString()
-                };
-                res.status(500).json(response);
+            // If a collection is null, an error response has already been sent.
+            if (!collection) {
                 return;
             }
 
-            const db = mongoose.connection.db;
-            const collection = db.collection(collectionName);
 
-            // Check if collection exists
-            const collections = await db.listCollections({ name: collectionName }).toArray();
-            if (collections.length === 0) {
-                const response: ApiResponse<null> = {
-                    success: false,
-                    message: `Collection '${collectionName}' not found`,
-                    timestamp: new Date().toISOString()
-                };
-                res.status(404).json(response);
-                return;
+            const db = mongoose.connection.db;
+
+            // Quick check to satisfy TypeScript and handle potential edge cases
+            if (!db) {
+                throw new AppError('Database instance is not available', 500);
             }
 
             // Get collection stats
             const [documentCount, stats, indexes] = await Promise.all([
                 collection.countDocuments(),
-                collection.stats().catch(() => null),
+                db.command({ collStats: collectionName }).catch(() => null),
                 collection.listIndexes().toArray().catch(() => [])
             ]);
 
@@ -282,7 +273,6 @@ export class DbController {
             next(error);
         }
     }
-
     /**
      * Get sample documents from a collection
      */
@@ -292,28 +282,10 @@ export class DbController {
             const limit = parseInt(req.query.limit as string) || 5;
             const skip = parseInt(req.query.skip as string) || 0;
 
-            if (!mongoose.connection.db) {
-                const response: ApiResponse<null> = {
-                    success: false,
-                    message: 'Database connection not established',
-                    timestamp: new Date().toISOString()
-                };
-                res.status(500).json(response);
-                return;
-            }
+            const collection = await this._getAndVerifyCollection(collectionName, res);
 
-            const db = mongoose.connection.db;
-            const collection = db.collection(collectionName);
-
-            // Check if collection exists
-            const collections = await db.listCollections({ name: collectionName }).toArray();
-            if (collections.length === 0) {
-                const response: ApiResponse<null> = {
-                    success: false,
-                    message: `Collection '${collectionName}' not found`,
-                    timestamp: new Date().toISOString()
-                };
-                res.status(404).json(response);
+            // If a collection is null, an error response has already been sent.
+            if (!collection) {
                 return;
             }
 
@@ -355,4 +327,39 @@ export class DbController {
         }
     }
 
+    /**
+     * A private helper method to get and verify a MongoDB collection.
+     * It checks for a valid DB connection and the existence of the collection.
+     * If validation fails, it sends an error response and returns null.
+     * @param collectionName - The name of the collection to verify.
+     * @param res - The Express response object.
+     * @returns The collection object or null if validation fails.
+     */
+    private static async _getAndVerifyCollection(collectionName: string, res: Response): Promise<Collection | null> {
+        if (!mongoose.connection.db) {
+            const response: ApiResponse<null> = {
+                success: false,
+                message: 'Database connection not established',
+                timestamp: new Date().toISOString()
+            };
+            res.status(500).json(response);
+            return null;
+        }
+
+        const db = mongoose.connection.db;
+        const collections = await db.listCollections({ name: collectionName }).toArray();
+
+        if (collections.length === 0) {
+            const response: ApiResponse<null> = {
+                success: false,
+                message: `Collection '${collectionName}' not found`,
+                timestamp: new Date().toISOString()
+            };
+            res.status(404).json(response);
+            return null;
+        }
+
+        // Explicitly cast the return value to the expected Collection type to resolve the conflict.
+        return db.collection(collectionName) as Collection;
+    }
 }

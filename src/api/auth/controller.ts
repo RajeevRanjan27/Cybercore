@@ -25,7 +25,7 @@ export class AuthController {
                 if (!defaultTenant) {
                     throw new AppError('Default tenant not found. Please contact administrator.', 500);
                 }
-                finalTenantId = defaultTenant._id.toString();
+                finalTenantId = String(defaultTenant._id);
             }else {
                 // If tenantId is provided, verify it exists
                 const tenant = await Tenant.findById(tenantId);
@@ -47,7 +47,7 @@ export class AuthController {
             const tokens = AuthService.generateTokens(user);
 
             // Store refresh token
-            await AuthService.storeRefreshToken(user._id.toString(), tokens.refreshToken);
+            await AuthService.storeRefreshToken(String(user._id), tokens.refreshToken);
 
             const response: ApiResponse = {
                 success: true,
@@ -118,7 +118,7 @@ export class AuthController {
             await AuthService.clearFailedLoginAttempts(email, ipAddress);
 
             // Check for suspicious activity
-            const isSuspicious = await AuthService.checkSuspiciousActivity(user._id.toString(), ipAddress || '');
+            const isSuspicious = await AuthService.checkSuspiciousActivity(String(user._id), ipAddress || '');
             if (isSuspicious) {
                 // Log suspicious activity but don't block (you could add more logic here)
                 console.log(`⚠️ Suspicious login detected for user ${user._id} from IP ${ipAddress}`);
@@ -132,13 +132,13 @@ export class AuthController {
             await user.save();
 
             // Track login activity
-            await AuthService.trackLogin(user._id.toString(), ipAddress);
+            await AuthService.trackLogin(String(user._id), ipAddress);
 
             // Generate tokens
             const tokens = AuthService.generateTokens(user);
 
             // Store refresh token (this now updates cache too)
-            await AuthService.storeRefreshToken(user._id.toString(), tokens.refreshToken);
+            await AuthService.storeRefreshToken(String(user._id), tokens.refreshToken);
 
             const response: ApiResponse = {
                 success: true,

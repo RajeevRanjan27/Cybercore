@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, {Schema, Document, Types} from 'mongoose';
 
 export interface ITenant extends Document {
     name: string;

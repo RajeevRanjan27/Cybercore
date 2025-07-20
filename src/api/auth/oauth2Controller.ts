@@ -249,7 +249,7 @@ export class OAuth2Controller {
             const result = await OAuth2Service.handleCallback(provider, code, state, req);
 
             // Check if the OAuth2 account is already linked to another user
-            if (result.user._id.toString() !== user.userId) {
+            if (String(result.user._id) !== user.userId) {
                 throw new AppError('This OAuth2 account is already linked to another user', 409);
             }
 

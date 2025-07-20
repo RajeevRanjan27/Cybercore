@@ -275,10 +275,10 @@ export class OAuth2Service {
 
             // Generate application tokens
             const appTokens = AuthService.generateTokens(user);
-            await AuthService.storeRefreshToken(user._id.toString(), appTokens.refreshToken);
+            await AuthService.storeRefreshToken(String(user._id), appTokens.refreshToken);
 
             // Log OAuth2 authentication
-            await AuditService.logActivity(user._id.toString(), 'OAUTH2_LOGIN', {
+            await AuditService.logActivity(String(user._id), 'OAUTH2_LOGIN', {
                 provider,
                 isNewUser,
                 ipAddress: req.ip,
@@ -889,7 +889,7 @@ export class OAuth2Service {
                 if (!defaultTenant) {
                     throw new AppError('Default tenant not found', 500);
                 }
-                finalTenantId = defaultTenant._id.toString();
+                finalTenantId =String( defaultTenant._id);
             }
 
             user = await User.create({

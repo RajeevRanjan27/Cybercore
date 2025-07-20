@@ -5,7 +5,6 @@ import { RefreshToken } from '@/core/models/RefreshToken';
 import { AppError } from '@/core/middlewares/errorHandler';
 import { AuthPayload } from '@/core/types';
 import { PERMISSIONS } from '@/core/constants/roles';
-import ms from "ms";
 import {CacheService} from "@/core/services/CacheService";
 
 export class AuthService {
@@ -22,15 +21,15 @@ export class AuthService {
         const jwtRefreshSecret: jwt.Secret = config.JWT_REFRESH_SECRET;
 
         const accessTokenOptions: jwt.SignOptions = {
-            expiresIn: (config.JWT_EXPIRES_IN || '15m') as ms.StringValue
+            expiresIn: (config.JWT_EXPIRES_IN || '15m')
         };
 
         const refreshTokenOptions: jwt.SignOptions = {
-            expiresIn: (config.JWT_REFRESH_EXPIRES_IN || '7d') as ms.StringValue
+            expiresIn: (config.JWT_REFRESH_EXPIRES_IN || '7d')
         };
 
         const payload: AuthPayload = {
-            userId: user._id.toString(),
+            userId: String(user._id),
             tenantId: user.tenantId.toString(),
             role: user.role,
             permissions: this.getUserPermissions(user.role)
@@ -39,7 +38,7 @@ export class AuthService {
         const accessToken = jwt.sign(payload, jwtSecret, accessTokenOptions);
 
 
-        const refreshTokenPayload = { userId: user._id.toString() };
+        const refreshTokenPayload = { userId: String(user._id) };
         const refreshToken = jwt.sign(refreshTokenPayload, jwtRefreshSecret, refreshTokenOptions);
 
         return { accessToken, refreshToken };
@@ -153,7 +152,7 @@ export class AuthService {
         await this.revokeRefreshToken(refreshToken);
 
         // Store new refresh token
-        await this.storeRefreshToken(user._id.toString(), tokens.refreshToken);
+        await this.storeRefreshToken(String(user._id), tokens.refreshToken);
 
         return tokens;
     }

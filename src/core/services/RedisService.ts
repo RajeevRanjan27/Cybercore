@@ -1,7 +1,7 @@
 // src/core/services/RedisService.ts
-import { createClient, RedisClientType } from 'redis';
-import { logger } from '@/core/infra/logger';
-import { config } from '@/config/env';
+import {createClient, RedisClientType} from 'redis';
+import {logger} from '@/core/infra/logger';
+import {config} from '@/config/env';
 
 export class RedisService {
     private static client: RedisClientType;
@@ -181,8 +181,7 @@ export class RedisService {
                 return false;
             }
 
-            const result = await this.client.expire(key, ttlSeconds);
-            return result>0;
+            return await this.client.expire(key, ttlSeconds);
         } catch (error) {
             logger.error('Redis EXPIRE error:', { key, ttlSeconds, error });
             return false;
@@ -278,7 +277,7 @@ export class RedisService {
                 return false;
             }
 
-            return await this.client.sIsMember(key, member)>0;
+            return await this.client.sIsMember(key, member);
         } catch (error) {
             logger.error('Redis SISMEMBER error:', { key, member, error });
             return false;

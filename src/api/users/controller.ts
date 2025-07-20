@@ -624,6 +624,11 @@ export class UserController {
                     { new: true }
                 ).select('-password');
 
+                if (!deletedUser) {
+                    // This handles the case where the user wasn't found by the update query.
+                    throw new AppError('User not found or could not be updated', 404);
+                }
+
                 // Cleanup user sessions and tokens
                 await UserService.cleanupUserSessions(id);
             }
@@ -740,14 +745,14 @@ export class UserController {
             // Clear affected caches
             await Promise.all(
                 targetUsers.map(targetUser =>
-                    CacheService.invalidateUserCaches(targetUser._id.toString())
+                    CacheService.invalidateUserCaches(String(targetUser._id))
                 )
             );
 
             // Log bulk operation
             await AuditService.logActivity(user.userId, 'USER_BULK_OPERATION', {
                 operation,
-                targetUserIds: targetUsers.map(u => u._id.toString()),
+                targetUserIds: targetUsers.map(u => String(u._id)),
                 data,
                 successCount: results.success.length,
                 failureCount: results.failures.length
@@ -1435,7 +1440,7 @@ export class UserController {
             const permissions = {
                 role: targetUser.role,
                 effectivePermissions: RBACService.getEffectivePermissions({
-                    id: targetUser._id.toString(),
+                    id: String(targetUser._id),
                     role: targetUser.role,
                     tenantId: targetUser.tenantId?.toString()
                 }),

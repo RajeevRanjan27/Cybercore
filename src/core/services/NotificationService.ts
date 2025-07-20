@@ -71,6 +71,8 @@ export class NotificationService {
                 priority: 'normal'
             });
 
+            if (!user._id) throw new Error('No user found.');
+
             // Send in-app notification
             await this.sendInAppNotification(user._id.toString(), {
                 type: 'profile_update',

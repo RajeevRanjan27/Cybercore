@@ -561,13 +561,13 @@ router.post('/activate',
 
             // Generate auth tokens
             const tokens = AuthService.generateTokens(user);
-            await AuthService.storeRefreshToken(user._id.toString(), tokens.refreshToken);
+            await AuthService.storeRefreshToken(String(user._id), tokens.refreshToken);
 
             // Send welcome email
             await NotificationService.sendWelcomeEmail(user);
 
             // Log activation
-            await AuditService.logActivity(user._id.toString(), 'USER_ACTIVATE', {
+            await AuditService.logActivity(String(user._id), 'USER_ACTIVATE', {
                 invitedBy: decoded.invitedBy
             });
 

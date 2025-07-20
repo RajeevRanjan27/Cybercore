@@ -197,7 +197,7 @@ export class UserService {
                             { new: true }
                         );
                         // Invalidate user sessions
-                        await this.invalidateUserSessions(user._id.toString());
+                        await this.invalidateUserSessions(String(user._id));
                         break;
 
                     case 'changeRole':
@@ -243,7 +243,7 @@ export class UserService {
                             },
                             { new: true }
                         );
-                        await this.invalidateUserSessions(user._id.toString());
+                        await this.invalidateUserSessions(String(user._id));
                         break;
 
                     default:
@@ -251,7 +251,7 @@ export class UserService {
                 }
 
                 results.success.push({
-                    userId: user._id.toString(),
+                    userId: String(user._id),
                     email: user.email,
                     operation,
                     result: result ? {
@@ -263,7 +263,7 @@ export class UserService {
 
             } catch (error) {
                 results.failures.push({
-                    userId: user._id.toString(),
+                    userId: String(user._id),
                     email: user.email,
                     error: error instanceof Error ? error.message : 'Unknown error',
                     operation
@@ -649,7 +649,7 @@ export class UserService {
     static getUserRestrictions(targetUser: IUser, requestingUser: AuthPayload): string[] {
         const restrictions: string[] = [];
 
-        if (targetUser._id.toString() === requestingUser.userId) {
+        if (String(targetUser._id) === requestingUser.userId) {
             restrictions.push('cannot_delete_self', 'cannot_change_own_role');
         }
 
