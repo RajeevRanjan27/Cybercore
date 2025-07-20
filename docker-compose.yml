@@ -1,6 +1,4 @@
 # docker-compose.dev.yml
-version: '3.8'
-
 services:
   # Development API Server
   app:
@@ -102,7 +100,6 @@ networks:
 
 ---
 # docker-compose.prod.yml
-version: '3.8'
 
 services:
   # Production API Server (Multiple Instances)
@@ -260,8 +257,6 @@ networks:
 
 ---
 # docker-compose.test.yml
-version: '3.8'
-
 services:
   # Test API Server
   app-test:

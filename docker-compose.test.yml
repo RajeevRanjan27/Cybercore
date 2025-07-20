@@ -1,0 +1,55 @@
+services:
+  # Test MongoDB
+  mongo-test:
+    image: mongo:7.0
+    container_name: cybercore-mongo-test
+    ports:
+      - "27018:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=cybercore_test
+    tmpfs:
+      - /data/db
+    networks:
+      - test-network
+
+  # Test Redis
+  redis-test:
+    image: redis:7.2-alpine
+    container_name: cybercore-redis-test
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes --requirepass redis123
+    tmpfs:
+      - /data
+    networks:
+      - test-network
+
+  # Test Runner
+  test-runner:
+    build:
+      context: .
+      target: dev
+      dockerfile: Dockerfile
+    container_name: cybercore-test-runner
+    environment:
+      - NODE_ENV=test
+      - MONGODB_URI=mongodb://mongo-test:27017/cybercore_test
+      - REDIS_URL=redis://redis-test:6379
+      - REDIS_PASSWORD=redis123
+      - JWT_SECRET=test_jwt_secret_key
+      - JWT_REFRESH_SECRET=test_refresh_secret_key
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - mongo-test
+      - redis-test
+    networks:
+      - test-network
+    command: npm run test:with:docker
+
+networks:
+  test-network:
+    driver: bridge
